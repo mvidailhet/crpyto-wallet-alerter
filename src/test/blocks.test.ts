@@ -3,20 +3,46 @@ import { describe, expect, it } from "vitest";
 import {
   chunkBlockRange,
   findFirstBlockAtOrAfter,
-  parseUtcDateWindow,
+  parseEuropeParisDateWindow,
   type BlockTimestampReader,
 } from "../rpc/blocks.js";
 
-describe("UTC date parsing", () => {
-  it("interprets date-only inputs as UTC calendar boundaries", () => {
-    const window = parseUtcDateWindow("2026-09-01", "2026-09-02");
+describe("Europe/Paris date parsing", () => {
+  it("interprets date-only inputs as Europe/Paris calendar boundaries", () => {
+    const window = parseEuropeParisDateWindow("2026-09-01", "2026-09-02");
 
-    expect(window.from.toISOString()).toBe("2026-09-01T00:00:00.000Z");
-    expect(window.to.toISOString()).toBe("2026-09-02T00:00:00.000Z");
+    expect(window.from.toISOString()).toBe("2026-08-31T22:00:00.000Z");
+    expect(window.to.toISOString()).toBe("2026-09-01T22:00:00.000Z");
+  });
+
+  it("interprets date-time inputs as Europe/Paris wall-clock time", () => {
+    const window = parseEuropeParisDateWindow(
+      "2026-09-01T14:01:00",
+      "2026-09-01T14:02:00",
+    );
+
+    expect(window.from.toISOString()).toBe("2026-09-01T12:01:00.000Z");
+    expect(window.to.toISOString()).toBe("2026-09-01T12:02:00.000Z");
+  });
+
+  it("uses the winter Europe/Paris offset when applicable", () => {
+    const window = parseEuropeParisDateWindow(
+      "2026-01-01T14:01:00",
+      "2026-01-01T14:02:00",
+    );
+
+    expect(window.from.toISOString()).toBe("2026-01-01T13:01:00.000Z");
+    expect(window.to.toISOString()).toBe("2026-01-01T13:02:00.000Z");
+  });
+
+  it("rejects timezone suffixes to avoid mixing UTC and Dexscreener-local inputs", () => {
+    expect(() =>
+      parseEuropeParisDateWindow("2026-09-01T14:01:00Z", "2026-09-01T14:02:00Z"),
+    ).toThrow("Use Europe/Paris local time without a timezone suffix");
   });
 
   it("rejects inverted windows", () => {
-    expect(() => parseUtcDateWindow("2026-09-02", "2026-09-01")).toThrow(
+    expect(() => parseEuropeParisDateWindow("2026-09-02", "2026-09-01")).toThrow(
       "--to must be after --from",
     );
   });

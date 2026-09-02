@@ -10,7 +10,7 @@ import { groupTradesByTransaction, inferTargetTokenTrade } from "../analysis/tra
 import { discoverV3Pools } from "../dex/v3/pools.js";
 import { fetchTokenMetadata, fetchV3Swaps } from "../dex/v3/swaps.js";
 import { createRobinhoodClient } from "../rpc/client.js";
-import { parseUtcDateWindow, resolveDateWindowToBlocks } from "../rpc/blocks.js";
+import { parseEuropeParisDateWindow, resolveDateWindowToBlocks } from "../rpc/blocks.js";
 import type { TokenMetadata, WalletSummary } from "../types/evm.js";
 
 type CliArgs = {
@@ -25,9 +25,9 @@ async function main() {
   const cliArgs = parseArgs(process.argv.slice(2));
   const config = loadConfig();
   const client = createRobinhoodClient(config.rpcUrl, config.rpcTimeoutMs);
-  const dateWindow = parseUtcDateWindow(cliArgs.from, cliArgs.to);
+  const dateWindow = parseEuropeParisDateWindow(cliArgs.from, cliArgs.to);
   console.error(
-    `Resolving UTC window ${dateWindow.from.toISOString()} to ${dateWindow.to.toISOString()} to block numbers...`,
+    `Resolving Europe/Paris window ${cliArgs.from} to ${cliArgs.to} (${dateWindow.from.toISOString()} to ${dateWindow.to.toISOString()}) to block numbers...`,
   );
   let blockSearchSteps = 0;
   const blockWindow = await resolveDateWindowToBlocks(client, dateWindow, ({ label, mid }) => {

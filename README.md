@@ -2,7 +2,7 @@
 
 TypeScript CLI for discovering buyer wallets for a token on Robinhood Chain using direct EVM RPC calls.
 
-The milestone 1 workflow accepts a token address and UTC date window, discovers Uniswap V3-style pools against configured quote tokens, reads `Swap` logs through RPC, infers target-token buys, and writes wallet summaries to a JSON file.
+The milestone 1 workflow accepts a token address and Europe/Paris date window, discovers Uniswap V3-style pools against configured quote tokens, reads `Swap` logs through RPC, infers target-token buys, and writes wallet summaries to a JSON file.
 
 ## Setup
 
@@ -33,7 +33,15 @@ Choose a different output file with:
 npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02 --output cashcat-buyers.json
 ```
 
-Date-only inputs are interpreted as UTC calendar boundaries. The example scans from `2026-09-01T00:00:00.000Z` through the block before `2026-09-02T00:00:00.000Z`.
+Date inputs are interpreted as Europe/Paris wall-clock time to make manual comparisons with Dexscreener easier. Do not include a timezone suffix such as `Z` or `+02:00`.
+
+For example, this scans the Dexscreener-visible minute from `Sep 1 02:01 PM` to `Sep 1 02:02 PM` in Europe/Paris:
+
+```bash
+npm run find-buyers -- --token 0x... --from 2026-09-01T14:01:00 --to 2026-09-01T14:02:00
+```
+
+Internally that summer timestamp maps to `2026-09-01T12:01:00.000Z` through the block before `2026-09-01T12:02:00.000Z`.
 
 Use raw mode to include decoded MVP trade records:
 

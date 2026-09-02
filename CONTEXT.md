@@ -16,9 +16,9 @@ _Avoid_: Pool-only workflow, manual pool lookup
 The user-specified time interval used to search for token buys. Users define it with dates, even though the system resolves those dates to chain block numbers before querying logs.
 _Avoid_: Block range, from block, to block
 
-**UTC Date Window**:
-An analysis window interpreted in UTC. A date without a time means the UTC calendar day starting at `00:00:00Z`.
-_Avoid_: Local date window, browser timezone
+**Europe/Paris Date Window**:
+An analysis window interpreted as Europe/Paris wall-clock time so CLI input lines up with Dexscreener's local timestamp display. A date without a time means the Europe/Paris calendar day starting at local midnight.
+_Avoid_: UTC input, timezone-suffixed input
 
 **Buyer Wallet**:
 The transaction `from` address for a transaction whose decoded swap increased the target token output. This is the MVP definition and may differ from the final recipient in routed or contract-mediated trades.
