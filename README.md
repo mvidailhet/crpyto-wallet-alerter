@@ -16,6 +16,7 @@ cp .env.example .env
 ```ini
 ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com/
 LOG_CHUNK_SIZE=1000
+RPC_TIMEOUT_MS=10000
 ```
 
 ## Usage
@@ -78,7 +79,7 @@ Raw token amounts stay as `bigint` internally. Formatting happens at the output 
 npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02 --raw
 ```
 
-If the public RPC limits log ranges, lower `LOG_CHUNK_SIZE` and retry.
+If the public RPC limits log ranges, lower `LOG_CHUNK_SIZE` and retry. If the RPC stalls on historical block or log requests, lower `RPC_TIMEOUT_MS` to fail faster or configure a different plain EVM RPC endpoint.
 
 ## Development
 

@@ -5,6 +5,13 @@ export type BlockTimestampReader = {
   getBlock(args: { blockNumber: bigint }): Promise<{ timestamp: bigint }>;
 };
 
+export type BlockSearchProgress = (event: {
+  label: "from" | "to";
+  low: bigint;
+  high: bigint;
+  mid: bigint;
+}) => void;
+
 export function parseUtcDateWindow(fromInput: string, toInput: string): DateWindow {
   const from = parseUtcBoundary(fromInput, "from");
   const to = parseUtcBoundary(toInput, "to");
@@ -30,10 +37,13 @@ function parseUtcBoundary(input: string, field: string): Date {
 export async function resolveDateWindowToBlocks(
   client: BlockTimestampReader,
   window: DateWindow,
+  onProgress?: BlockSearchProgress,
 ): Promise<BlockWindow> {
   const latest = await client.getBlockNumber();
-  const fromBlock = await findFirstBlockAtOrAfter(client, latest, toUnixSeconds(window.from));
-  const exclusiveToBlock = await findFirstBlockAtOrAfter(client, latest, toUnixSeconds(window.to));
+  const [fromBlock, exclusiveToBlock] = await Promise.all([
+    findFirstBlockAtOrAfter(client, latest, toUnixSeconds(window.from), "from", onProgress),
+    findFirstBlockAtOrAfter(client, latest, toUnixSeconds(window.to), "to", onProgress),
+  ]);
 
   return {
     fromBlock,
@@ -45,6 +55,8 @@ export async function findFirstBlockAtOrAfter(
   client: BlockTimestampReader,
   highBlock: bigint,
   targetTimestamp: bigint,
+  label: "from" | "to" = "from",
+  onProgress?: BlockSearchProgress,
 ): Promise<bigint> {
   let low = 0n;
   let high = highBlock;
@@ -52,6 +64,7 @@ export async function findFirstBlockAtOrAfter(
 
   while (low <= high) {
     const mid = (low + high) / 2n;
+    onProgress?.({ label, low, high, mid });
     const block = await client.getBlock({ blockNumber: mid });
 
     if (block.timestamp >= targetTimestamp) {

@@ -21,10 +21,23 @@ type CliArgs = {
 async function main() {
   const cliArgs = parseArgs(process.argv.slice(2));
   const config = loadConfig();
-  const client = createRobinhoodClient(config.rpcUrl);
+  const client = createRobinhoodClient(config.rpcUrl, config.rpcTimeoutMs);
   const dateWindow = parseUtcDateWindow(cliArgs.from, cliArgs.to);
-  const blockWindow = await resolveDateWindowToBlocks(client, dateWindow);
+  console.error(
+    `Resolving UTC window ${dateWindow.from.toISOString()} to ${dateWindow.to.toISOString()} to block numbers...`,
+  );
+  let blockSearchSteps = 0;
+  const blockWindow = await resolveDateWindowToBlocks(client, dateWindow, ({ label, mid }) => {
+    blockSearchSteps += 1;
+    if (blockSearchSteps === 1 || blockSearchSteps % 10 === 0) {
+      console.error(`Searching ${label} boundary near block ${mid.toString()}...`);
+    }
+  });
+  console.error(
+    `Resolved block range ${blockWindow.fromBlock.toString()}-${blockWindow.toBlock.toString()}.`,
+  );
 
+  console.error("Discovering configured V3 pools...");
   const discovery = await discoverV3Pools({
     client,
     factory: robinhoodContracts.v3Factory,
@@ -38,6 +51,7 @@ async function main() {
     return;
   }
 
+  console.error(`Found ${discovery.pools.length} pool(s). Fetching swaps...`);
   const [targetMetadata, swaps] = await Promise.all([
     fetchTokenMetadata(client, cliArgs.token),
     fetchV3Swaps({
