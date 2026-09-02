@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+
 import { formatUnits, getAddress, type Address } from "viem";
 
 import { defaultQuoteTokens, defaultV3FeeTiers, robinhoodContracts } from "../chains/robinhood.js";
@@ -16,6 +18,7 @@ type CliArgs = {
   from: string;
   to: string;
   raw: boolean;
+  output: string;
 };
 
 async function main() {
@@ -47,7 +50,8 @@ async function main() {
   });
 
   if (discovery.pools.length === 0) {
-    printJson({ wallets: [], warnings: discovery.warnings });
+    await writeJsonFile(cliArgs.output, { wallets: [], warnings: discovery.warnings });
+    console.error(`Wrote results to ${cliArgs.output}.`);
     return;
   }
 
@@ -74,7 +78,7 @@ async function main() {
   }
 
   const summaries = aggregateWalletSummaries(trades);
-  printJson({
+  await writeJsonFile(cliArgs.output, {
     token: renderToken(targetMetadata),
     window: {
       from: dateWindow.from.toISOString(),
@@ -89,6 +93,7 @@ async function main() {
     rawTrades: cliArgs.raw ? trades : undefined,
     warnings: trades.length === 0 ? ["No target-token buys found in discovered pools."] : [],
   });
+  console.error(`Wrote results to ${cliArgs.output}.`);
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -96,14 +101,15 @@ function parseArgs(args: string[]): CliArgs {
   const token = readFlag(args, "--token");
   const from = readFlag(args, "--from");
   const to = readFlag(args, "--to");
+  const output = readFlag(args, "--output") ?? "results.json";
 
   if (!token || !from || !to) {
     throw new Error(
-      "Usage: npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02",
+      "Usage: npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02 [--output results.json]",
     );
   }
 
-  return { token: getAddress(token), from, to, raw };
+  return { token: getAddress(token), from, to, raw, output };
 }
 
 function readFlag(args: string[], flag: string) {
@@ -141,14 +147,16 @@ function renderToken(metadata: TokenMetadata) {
   };
 }
 
-function printJson(value: unknown) {
-  console.log(
+async function writeJsonFile(path: string, value: unknown) {
+  await writeFile(
+    path,
     JSON.stringify(
       value,
       (_key, nestedValue) =>
         typeof nestedValue === "bigint" ? nestedValue.toString() : nestedValue,
       2,
-    ),
+    ) + "\n",
+    "utf8",
   );
 }
 

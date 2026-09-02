@@ -2,7 +2,7 @@
 
 TypeScript CLI for discovering buyer wallets for a token on Robinhood Chain using direct EVM RPC calls.
 
-The milestone 1 workflow accepts a token address and UTC date window, discovers Uniswap V3-style pools against configured quote tokens, reads `Swap` logs through RPC, infers target-token buys, and prints wallet summaries.
+The milestone 1 workflow accepts a token address and UTC date window, discovers Uniswap V3-style pools against configured quote tokens, reads `Swap` logs through RPC, infers target-token buys, and writes wallet summaries to a JSON file.
 
 ## Setup
 
@@ -23,6 +23,14 @@ RPC_TIMEOUT_MS=10000
 
 ```bash
 npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02
+```
+
+By default, results are written to `results.json`. Console output is reserved for progress and errors.
+
+Choose a different output file with:
+
+```bash
+npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02 --output cashcat-buyers.json
 ```
 
 Date-only inputs are interpreted as UTC calendar boundaries. The example scans from `2026-09-01T00:00:00.000Z` through the block before `2026-09-02T00:00:00.000Z`.
@@ -47,7 +55,7 @@ Pool discovery calls `getPool(token, quoteToken, fee)` on the V3 factory. If no 
 
 ## Output
 
-Default output is JSON wallet summaries:
+Default output is `results.json` containing JSON wallet summaries:
 
 - buyer wallet;
 - buy count;
