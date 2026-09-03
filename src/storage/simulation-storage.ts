@@ -30,6 +30,12 @@ export type MarketSnapshotRecord = {
   metrics: JsonObject;
 };
 
+export type InterestingWalletRecord = {
+  wallet: string;
+  updatedAt: Date;
+  evidence: JsonObject;
+};
+
 export type TradeSetupRecord = {
   id: string;
   strategyVersionId: string;
@@ -65,14 +71,24 @@ export type SkippedPairSummaryRecord = {
   details: JsonObject;
 };
 
+export type AlertHistoryRecord = {
+  id: string;
+  tradeSetupId: string;
+  sentAt: Date;
+  channel: string;
+  payload: JsonObject;
+};
+
 export type ResumeState = {
   strategyVersions: StrategyVersionRecord[];
   scanHealth: ScanHealthRecord[];
   marketSnapshots: MarketSnapshotRecord[];
+  interestingWallets: InterestingWalletRecord[];
   tradeSetups: TradeSetupRecord[];
   simulatedPositions: SimulatedPositionRecord[];
   scanGaps: ScanGapRecord[];
   skippedPairSummaries: SkippedPairSummaryRecord[];
+  alertHistory: AlertHistoryRecord[];
 };
 
 type StrategyVersionRow = {
@@ -94,6 +110,12 @@ type MarketSnapshotRow = {
   captured_at: string;
   block_number: string;
   metrics_json: string;
+};
+
+type InterestingWalletRow = {
+  wallet: string;
+  updated_at: string;
+  evidence_json: string;
 };
 
 type TradeSetupRow = {
@@ -129,6 +151,14 @@ type SkippedPairSummaryRow = {
   scanned_at: string;
   reason: string;
   details_json: string;
+};
+
+type AlertHistoryRow = {
+  id: string;
+  trade_setup_id: string;
+  sent_at: string;
+  channel: string;
+  payload_json: string;
 };
 
 export function resolveSimulationDatabasePath(options: SimulationStorageOptions = {}) {
@@ -213,6 +243,22 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           capturedAt: toUtc(record.capturedAt),
           blockNumber: record.blockNumber.toString(),
           metricsJson: JSON.stringify(record.metrics),
+        });
+    },
+
+    saveInterestingWallet(record: InterestingWalletRecord) {
+      database
+        .prepare(
+          `INSERT INTO interesting_wallets (wallet, updated_at, evidence_json)
+           VALUES (@wallet, @updatedAt, @evidenceJson)
+           ON CONFLICT(wallet) DO UPDATE SET
+             updated_at = excluded.updated_at,
+             evidence_json = excluded.evidence_json`,
+        )
+        .run({
+          wallet: record.wallet,
+          updatedAt: toUtc(record.updatedAt),
+          evidenceJson: JSON.stringify(record.evidence),
         });
     },
 
@@ -306,6 +352,26 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
         });
     },
 
+    saveAlertHistory(record: AlertHistoryRecord) {
+      database
+        .prepare(
+          `INSERT INTO alert_history (id, trade_setup_id, sent_at, channel, payload_json)
+           VALUES (@id, @tradeSetupId, @sentAt, @channel, @payloadJson)
+           ON CONFLICT(id) DO UPDATE SET
+             trade_setup_id = excluded.trade_setup_id,
+             sent_at = excluded.sent_at,
+             channel = excluded.channel,
+             payload_json = excluded.payload_json`,
+        )
+        .run({
+          id: record.id,
+          tradeSetupId: record.tradeSetupId,
+          sentAt: toUtc(record.sentAt),
+          channel: record.channel,
+          payloadJson: JSON.stringify(record.payload),
+        });
+    },
+
     getResumeState(): ResumeState {
       return {
         strategyVersions: database
@@ -320,6 +386,10 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .prepare("SELECT * FROM market_snapshots ORDER BY captured_at, pair")
           .all()
           .map((row) => toMarketSnapshotRecord(row as MarketSnapshotRow)),
+        interestingWallets: database
+          .prepare("SELECT * FROM interesting_wallets ORDER BY updated_at, wallet")
+          .all()
+          .map((row) => toInterestingWalletRecord(row as InterestingWalletRow)),
         tradeSetups: database
           .prepare("SELECT * FROM trade_setups ORDER BY created_at, id")
           .all()
@@ -336,6 +406,10 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .prepare("SELECT * FROM skipped_pair_summaries ORDER BY scanned_at, id")
           .all()
           .map((row) => toSkippedPairSummaryRecord(row as SkippedPairSummaryRow)),
+        alertHistory: database
+          .prepare("SELECT * FROM alert_history ORDER BY sent_at, id")
+          .all()
+          .map((row) => toAlertHistoryRecord(row as AlertHistoryRow)),
       };
     },
   };
@@ -362,6 +436,12 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
   block_number TEXT NOT NULL,
   metrics_json TEXT NOT NULL,
   PRIMARY KEY (pair, captured_at)
+);
+
+CREATE TABLE IF NOT EXISTS interesting_wallets (
+  wallet TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  evidence_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS trade_setups (
@@ -398,6 +478,14 @@ CREATE TABLE IF NOT EXISTS skipped_pair_summaries (
   reason TEXT NOT NULL,
   details_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS alert_history (
+  id TEXT PRIMARY KEY,
+  trade_setup_id TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
 `;
 
 function toUtc(value: Date) {
@@ -432,6 +520,14 @@ function toMarketSnapshotRecord(row: MarketSnapshotRow): MarketSnapshotRecord {
     capturedAt: new Date(row.captured_at),
     blockNumber: BigInt(row.block_number),
     metrics: parseJson<JsonObject>(row.metrics_json),
+  };
+}
+
+function toInterestingWalletRecord(row: InterestingWalletRow): InterestingWalletRecord {
+  return {
+    wallet: row.wallet,
+    updatedAt: new Date(row.updated_at),
+    evidence: parseJson<JsonObject>(row.evidence_json),
   };
 }
 
@@ -475,5 +571,15 @@ function toSkippedPairSummaryRecord(row: SkippedPairSummaryRow): SkippedPairSumm
     scannedAt: new Date(row.scanned_at),
     reason: row.reason,
     details: parseJson<JsonObject>(row.details_json),
+  };
+}
+
+function toAlertHistoryRecord(row: AlertHistoryRow): AlertHistoryRecord {
+  return {
+    id: row.id,
+    tradeSetupId: row.trade_setup_id,
+    sentAt: new Date(row.sent_at),
+    channel: row.channel,
+    payload: parseJson<JsonObject>(row.payload_json),
   };
 }

@@ -38,6 +38,8 @@ describe("simulation storage initialization", () => {
     try {
       expect(storage.databasePath).toBe(configuredPath);
       expect(storage.listTables()).toEqual([
+        "alert_history",
+        "interesting_wallets",
         "market_snapshots",
         "scan_gaps",
         "scan_health",
@@ -75,6 +77,11 @@ describe("simulation storage initialization", () => {
         blockNumber: 124n,
         metrics: { marketCapUsd: 125_000, liquidityUsd: 80_000 },
       });
+      firstStorage.saveInterestingWallet({
+        wallet: "0x00000000000000000000000000000000000000b0",
+        updatedAt: new Date("2026-09-01T10:02:30.000Z"),
+        evidence: { profitableSetups: 2 },
+      });
       firstStorage.saveTradeSetup({
         id: "setup-1",
         strategyVersionId: "strategy-v1",
@@ -106,6 +113,13 @@ describe("simulation storage initialization", () => {
         reason: "low-liquidity",
         details: { liquidityUsd: 500 },
       });
+      firstStorage.saveAlertHistory({
+        id: "alert-1",
+        tradeSetupId: "setup-1",
+        sentAt: new Date("2026-09-01T10:12:00.000Z"),
+        channel: "console",
+        payload: { message: "Trade setup created" },
+      });
     } finally {
       firstStorage.close();
     }
@@ -136,6 +150,13 @@ describe("simulation storage initialization", () => {
             capturedAt: new Date("2026-09-01T10:02:00.000Z"),
             blockNumber: 124n,
             metrics: { marketCapUsd: 125_000, liquidityUsd: 80_000 },
+          },
+        ],
+        interestingWallets: [
+          {
+            wallet: "0x00000000000000000000000000000000000000b0",
+            updatedAt: new Date("2026-09-01T10:02:30.000Z"),
+            evidence: { profitableSetups: 2 },
           },
         ],
         tradeSetups: [
@@ -175,6 +196,15 @@ describe("simulation storage initialization", () => {
             scannedAt: new Date("2026-09-01T10:11:00.000Z"),
             reason: "low-liquidity",
             details: { liquidityUsd: 500 },
+          },
+        ],
+        alertHistory: [
+          {
+            id: "alert-1",
+            tradeSetupId: "setup-1",
+            sentAt: new Date("2026-09-01T10:12:00.000Z"),
+            channel: "console",
+            payload: { message: "Trade setup created" },
           },
         ],
       });

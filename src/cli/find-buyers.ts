@@ -11,6 +11,7 @@ import { discoverV3Pools } from "../dex/v3/pools.js";
 import { fetchTokenMetadata, fetchV3Swaps } from "../dex/v3/swaps.js";
 import { createRobinhoodClient } from "../rpc/client.js";
 import { parseEuropeParisDateWindow, resolveDateWindowToBlocks } from "../rpc/blocks.js";
+import { initializeSimulationStorage } from "../storage/simulation-storage.js";
 import type { TokenMetadata, WalletSummary } from "../types/evm.js";
 
 type CliArgs = {
@@ -24,6 +25,11 @@ type CliArgs = {
 async function main() {
   const cliArgs = parseArgs(process.argv.slice(2));
   const config = loadConfig();
+  const storage = initializeSimulationStorage({
+    databasePath: config.simulationDatabasePath,
+    dataDirectory: config.simulationDataDirectory,
+  });
+  storage.close();
   const client = createRobinhoodClient(config.rpcUrl, config.rpcTimeoutMs);
   const dateWindow = parseEuropeParisDateWindow(cliArgs.from, cliArgs.to);
   console.error(
