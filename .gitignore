@@ -1,6 +1,12 @@
 node_modules/
 dist/
 coverage/
+data/*
+reports/*
+!data/**/*.example
+!data/**/*.template
+!reports/**/*.example
+!reports/**/*.template
 .env
 .DS_Store
 .agents/
