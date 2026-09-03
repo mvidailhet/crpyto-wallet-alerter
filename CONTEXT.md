@@ -1,61 +1,77 @@
-# Wallet Alerting
+# Robinhood Wallet Alerter
 
-This context defines the language for finding wallets with notable onchain trading behavior and alerting when those wallets act.
+The project finds Robinhood Chain meme-coin trade setups, records market history, and simulates how strategy triggers would have performed before any real trading automation is added.
 
 ## Language
 
+**Trade Setup**:
+A token pair that currently matches a strategy well enough to review or simulate as a possible trade.
+_Avoid_: Signal, coin, runner
+
+**Planned Buy Level**:
+A market-cap or price level where a trade setup would open a simulated position if reached.
+_Avoid_: Limit order
+
+**Pair**:
+The specific on-chain market used for price, liquidity, volume, and chart analysis.
+_Avoid_: Token market, coin
+
+**Token**:
+The asset being considered across one or more pairs.
+_Avoid_: Coin
+
+**Trigger**:
+An observed event or condition that causes the system to create or update a trade setup.
+_Avoid_: Signal
+
 **Interesting Wallet**:
-A wallet that bought a specified token during a specified block or date range and is worth reviewing because of measurable trade behavior such as buy size or recurrence.
-_Avoid_: Smart wallet, whale, insider, alpha wallet
+A wallet worth watching because its past behavior may improve trade setup quality.
+_Avoid_: Smart wallet, alpha wallet
 
-**Token Discovery Workflow**:
-A workflow where the user provides a token address directly, and the system discovers the relevant trading venues before analyzing buyer wallets.
-_Avoid_: Pool-only workflow, manual pool lookup
+**Wallet Evidence**:
+The observed behavior that explains why an interesting wallet is worth watching.
+_Avoid_: Wallet score explanation
 
-**Analysis Window**:
-The user-specified time interval used to search for token buys. Users define it with dates, even though the system resolves those dates to chain block numbers before querying logs.
-_Avoid_: Block range, from block, to block
+**Simulation**:
+A paper-trading evaluation of what would have happened if the system had acted on historical triggers.
+_Avoid_: Backtest, trading bot
 
-**Europe/Paris Date Window**:
-An analysis window interpreted as Europe/Paris wall-clock time so CLI input lines up with Dexscreener's local timestamp display. A date without a time means the Europe/Paris calendar day starting at local midnight.
-_Avoid_: UTC input, timezone-suffixed input
+**Historical Replay**:
+A simulation run against reconstructed past market history for a manually selected set of runner pairs.
+_Avoid_: Full backtest, universe backfill
 
-**Buyer Wallet**:
-The transaction `from` address for a transaction whose decoded swap increased the target token output. This is the MVP definition and may differ from the final recipient in routed or contract-mediated trades.
-_Avoid_: Recipient, swap sender, trader
+**Strategy Version**:
+An immutable named set of strategy parameters used to create trade setups and simulated positions.
+_Avoid_: Settings, config tweak
 
-**V3 Pool**:
-A Uniswap V3-style liquidity pool that emits swaps with signed token amount deltas and belongs to a factory that creates pools for token pairs and fee tiers.
-_Avoid_: V2 pair, V4 pool
+**Skipped Pair**:
+A pair that was considered by a scanner run but excluded from trade setup creation with a recorded reason.
+_Avoid_: Filtered coin
 
-**Quote Token**:
-A configured token paired against the target token when discovering candidate V3 pools, such as WETH or USDG.
-_Avoid_: Base token, paired coin
+**Simulated Position**:
+A paper-traded entry opened when a trade setup reaches one of its planned buy levels.
+_Avoid_: Real position, order
 
-**Pool Discovery**:
-The process of finding V3 pools for a target token by checking configured quote tokens and fee tiers against the V3 factory.
-_Avoid_: Full factory indexing, manual pool discovery
+**Stop Loss**:
+The simulated exit level where a simulated position is closed after a fixed loss from its entry.
+_Avoid_: Risk limit
 
-**Target Token Buy**:
-A V3 swap where the target token amount is negative, meaning the target token moved out of the pool.
-_Avoid_: Swap, transfer, purchase
+**Take Profit**:
+The simulated exit level where enough of a simulated position is sold to recover the initial entry cost.
+_Avoid_: Sell target
 
-**Wallet Summary**:
-The default analysis output grouped by buyer wallet, including buy count, total target token bought, total quote token spent, first and last buy time, and related transaction hashes.
-_Avoid_: Raw logs, decoded swaps
+**Moonbag**:
+The remaining simulated position after the take profit has recovered the initial entry cost.
+_Avoid_: Runner, free bag
 
-**Token Metadata**:
-The ERC-20 symbol and decimals used to format raw token amounts at the output boundary.
-_Avoid_: Price data, token identity
+**Momentum Warning**:
+A non-executing event that marks where momentum-exit conditions appeared to weaken a simulated position.
+_Avoid_: Sell signal
 
-**RPC Endpoint**:
-An EVM JSON-RPC endpoint used for chain reads. The project avoids data-product APIs while allowing the endpoint URL to be configured for public or archive-provider RPC access.
-_Avoid_: Paid API, indexer API
+**Scan Gap**:
+A time window where live market snapshots were missed because the scanner was not running or could not fetch data.
+_Avoid_: Outage
 
-**Empty Discovery Result**:
-A successful analysis result with no wallets and warnings explaining that no configured pools or qualifying buys were found.
-_Avoid_: Error, failure, missing data
-
-**Single-Pool Buy Detection**:
-The MVP rule that treats a transaction as a target-token buy when any configured V3 pool swap sends the target token out of that pool, without reconstructing the full multi-hop path.
-_Avoid_: Route reconstruction, multi-hop analysis
+**Adapter**:
+A source-specific integration that fetches or reconstructs market, wallet, or alert data for the project.
+_Avoid_: Provider, API client
