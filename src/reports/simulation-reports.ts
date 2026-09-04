@@ -226,6 +226,23 @@ function renderCsv(state: ResumeState, rows: PositionReportRow[]) {
         .join(","),
     ),
   ];
+  const dataSourceFailureLines = [
+    "",
+    "dataSourceFailures",
+    "adapter,scanner,failedAt,consecutiveFailures,nextRetryAt,error",
+    ...state.dataSourceFailures.map((failure) =>
+      [
+        failure.adapter,
+        failure.scanner,
+        formatEuropeParisDateTime(failure.failedAt),
+        failure.consecutiveFailures,
+        formatEuropeParisDateTime(failure.nextRetryAt),
+        failure.error,
+      ]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
   const skippedPairLines = [
     "",
     "skippedPairs",
@@ -242,7 +259,7 @@ function renderCsv(state: ResumeState, rows: PositionReportRow[]) {
         .join(","),
     ),
   ];
-  return `${[...positionLines, ...scanGapLines, ...skippedPairLines].join("\n")}\n`;
+  return `${[...positionLines, ...scanGapLines, ...dataSourceFailureLines, ...skippedPairLines].join("\n")}\n`;
 }
 
 function renderHtml(
@@ -280,6 +297,7 @@ function renderHtml(
   ${renderSetupTable(state.tradeSetups)}
   ${renderPositionTable(rows)}
   ${renderScanGapTable(state)}
+  ${renderDataSourceFailureTable(state)}
   ${renderSkippedPairsTable(skippedByReason)}
   ${renderSkippedPairDetailsTable(state)}
   ${renderCharts(state, markers)}
@@ -323,6 +341,19 @@ function renderScanGapTable(state: ResumeState) {
       .map(
         (gap) =>
           `<tr><td>${escapeHtml(gap.scanner)}</td><td>${escapeHtml(formatEuropeParisDateTime(gap.startedAt))}</td><td>${escapeHtml(formatEuropeParisDateTime(gap.endedAt))}</td><td>${escapeHtml(gap.reason)}</td></tr>`,
+      )
+      .join("")}</tbody>
+  </table>`;
+}
+
+function renderDataSourceFailureTable(state: ResumeState) {
+  return `<h2>Data-source failures</h2>
+  <table>
+    <thead><tr><th>Adapter</th><th>Scanner</th><th>Failed</th><th>Count</th><th>Next retry</th><th>Error</th></tr></thead>
+    <tbody>${state.dataSourceFailures
+      .map(
+        (failure) =>
+          `<tr><td>${escapeHtml(failure.adapter)}</td><td>${escapeHtml(failure.scanner)}</td><td>${escapeHtml(formatEuropeParisDateTime(failure.failedAt))}</td><td>${failure.consecutiveFailures}</td><td>${escapeHtml(formatEuropeParisDateTime(failure.nextRetryAt))}</td><td>${escapeHtml(failure.error)}</td></tr>`,
       )
       .join("")}</tbody>
   </table>`;

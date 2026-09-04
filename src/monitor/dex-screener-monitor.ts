@@ -30,6 +30,8 @@ export type DexScreenerPair = {
 export type DexScreenerMonitorScanResult = {
   snapshotsStored: number;
   skippedPairs: number;
+  dataSourceFailures: number;
+  backoffActive: boolean;
   simulation: SimulateTradeSetupsResult;
 };
 
@@ -43,6 +45,7 @@ export type RunDexScreenerMonitorOnceOptions = {
   capturedAt?: Date;
   blockNumber?: bigint;
   scannerName?: string;
+  adapterName?: string;
 };
 
 export type StartDexScreenerMonitorOptions = RunDexScreenerMonitorOnceOptions & {
@@ -53,21 +56,81 @@ export type StartDexScreenerMonitorOptions = RunDexScreenerMonitorOnceOptions & 
 
 const robinhoodChainId = "robinhood";
 const defaultScannerName = "dex-screener-monitor";
+const defaultAdapterName = "dex-screener";
+const maximumBackoffMs = 15 * 60 * 1000;
 
 export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOnceOptions) {
   const capturedAt = options.capturedAt ?? new Date();
   const blockNumber = options.blockNumber ?? BigInt(Math.floor(capturedAt.getTime() / 1000));
   const scanner = options.scannerName ?? defaultScannerName;
-  const pairs = (await (options.fetchPairs ?? fetchDexScreenerRobinhoodPairs)())
-    .filter((pair) => pair.chainId === robinhoodChainId)
-    .sort((left, right) => oneHourVolumeUsd(right) - oneHourVolumeUsd(left))
-    .slice(0, options.strategy.topPairsByOneHourVolume);
+  const adapter = options.adapterName ?? defaultAdapterName;
   const storage = initializeSimulationStorage({
     databasePath: options.databasePath,
     dataDirectory: options.dataDirectory,
   });
 
   try {
+    const existingFailure = storage
+      .getResumeState()
+      .dataSourceFailures.find((failure) => failure.adapter === adapter);
+    if (existingFailure && existingFailure.nextRetryAt > capturedAt) {
+      const simulation = storage.simulateTradeSetups(options.strategy);
+      storage.saveScanHealth({
+        scanner,
+        lastScannedAt: capturedAt,
+        lastScannedBlock: blockNumber,
+        status: `backoff:${adapter}`,
+      });
+      return {
+        snapshotsStored: 0,
+        skippedPairs: 0,
+        dataSourceFailures: 0,
+        backoffActive: true,
+        simulation,
+      };
+    }
+
+    let pairs: DexScreenerPair[];
+    try {
+      pairs = (await (options.fetchPairs ?? fetchDexScreenerRobinhoodPairs)())
+        .filter((pair) => pair.chainId === robinhoodChainId)
+        .sort((left, right) => oneHourVolumeUsd(right) - oneHourVolumeUsd(left))
+        .slice(0, options.strategy.topPairsByOneHourVolume);
+    } catch (error) {
+      const consecutiveFailures = (existingFailure?.consecutiveFailures ?? 0) + 1;
+      const nextRetryAt = new Date(capturedAt.getTime() + backoffMilliseconds(consecutiveFailures));
+      const message = error instanceof Error ? error.message : String(error);
+      storage.saveDataSourceFailure({
+        adapter,
+        scanner,
+        failedAt: capturedAt,
+        consecutiveFailures,
+        nextRetryAt,
+        error: message,
+      });
+      storage.saveScanGap({
+        id: `${scanner}:${adapter}:${scanGapStartedAt(capturedAt, options.strategy).toISOString()}:${capturedAt.toISOString()}:data-source-failure`,
+        scanner,
+        startedAt: scanGapStartedAt(capturedAt, options.strategy),
+        endedAt: capturedAt,
+        reason: `data-source-failure:${adapter}`,
+      });
+      const simulation = storage.simulateTradeSetups(options.strategy);
+      storage.saveScanHealth({
+        scanner,
+        lastScannedAt: capturedAt,
+        lastScannedBlock: blockNumber,
+        status: `failed:${adapter}`,
+      });
+      return {
+        snapshotsStored: 0,
+        skippedPairs: 0,
+        dataSourceFailures: 1,
+        backoffActive: true,
+        simulation,
+      };
+    }
+
     let skippedPairs = 0;
     const observedAthByPair = observedAthMarketCaps(storage.getResumeState().marketSnapshots);
 
@@ -105,6 +168,8 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
     return {
       snapshotsStored: pairs.length,
       skippedPairs,
+      dataSourceFailures: 0,
+      backoffActive: false,
       simulation,
     };
   } finally {
@@ -121,7 +186,7 @@ export function startDexScreenerMonitor(options: StartDexScreenerMonitorOptions)
     (async () => {
       const result = await runDexScreenerMonitorOnce(options);
       options.writeLine?.(
-        `Stored ${result.snapshotsStored} snapshot(s), skipped ${result.skippedPairs} pair(s), created ${result.simulation.tradeSetupsCreated} trade setup(s), opened ${result.simulation.positionsOpened} simulated position(s).`,
+        `Stored ${result.snapshotsStored} snapshot(s), skipped ${result.skippedPairs} pair(s), recorded ${result.dataSourceFailures} data-source failure(s), created ${result.simulation.tradeSetupsCreated} trade setup(s), opened ${result.simulation.positionsOpened} simulated position(s).`,
       );
     });
 
@@ -227,6 +292,14 @@ function skippedPairReason(
 
 function oneHourVolumeUsd(pair: DexScreenerPair) {
   return pair.volume?.h1 ?? 0;
+}
+
+function backoffMilliseconds(consecutiveFailures: number) {
+  return Math.min(2 ** consecutiveFailures * 60 * 1000, maximumBackoffMs);
+}
+
+function scanGapStartedAt(capturedAt: Date, strategy: StrategyConfig) {
+  return new Date(capturedAt.getTime() - strategy.scanIntervalMinutes * 60 * 1000);
 }
 
 function observedAthMarketCaps(

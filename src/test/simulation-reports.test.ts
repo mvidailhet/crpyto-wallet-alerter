@@ -78,6 +78,14 @@ describe("simulation reports", () => {
         endedAt: new Date("2026-09-01T09:15:00.000Z"),
         reason: "process-restart",
       });
+      storage.saveDataSourceFailure({
+        adapter: "dex-screener",
+        scanner: "live-monitor",
+        failedAt: new Date("2026-09-01T09:30:00.000Z"),
+        consecutiveFailures: 2,
+        nextRetryAt: new Date("2026-09-01T09:34:00.000Z"),
+        error: "HTTP 429",
+      });
       storage.saveSkippedPairSummary({
         id: "skip-1",
         scanner: "live-monitor",
@@ -105,6 +113,7 @@ describe("simulation reports", () => {
       expect(html).toContain("Trade setups");
       expect(html).toContain("Simulated positions");
       expect(html).toContain("Scan gaps");
+      expect(html).toContain("Data-source failures");
       expect(html).toContain("Skipped pairs by reason");
       expect(html).toContain("Skipped pair details");
       expect(html).toContain("Chart markers");
@@ -130,6 +139,11 @@ describe("simulation reports", () => {
       expect(csv).toContain("scanGaps");
       expect(csv).toContain("scanner,startedAt,endedAt,reason");
       expect(csv).toContain("live-monitor,2026-09-01T11:00:00,2026-09-01T11:15:00,process-restart");
+      expect(csv).toContain("dataSourceFailures");
+      expect(csv).toContain("adapter,scanner,failedAt,consecutiveFailures,nextRetryAt,error");
+      expect(csv).toContain(
+        "dex-screener,live-monitor,2026-09-01T11:30:00,2,2026-09-01T11:34:00,HTTP 429",
+      );
       expect(csv).toContain("skippedPairs");
       expect(csv).toContain("scanner,pair,scannedAt,reason,details");
       expect(csv).toContain(

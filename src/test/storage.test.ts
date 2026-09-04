@@ -61,6 +61,7 @@ describe("simulation storage initialization", () => {
       expect(storage.databasePath).toBe(configuredPath);
       expect(storage.listTables()).toEqual([
         "alert_history",
+        "data_source_failures",
         "interesting_wallets",
         "manual_replay_pairs",
         "market_snapshots",
@@ -438,12 +439,39 @@ describe("simulation storage initialization", () => {
         reason: "low-liquidity",
         details: { liquidityUsd: 500 },
       });
-      firstStorage.saveAlertHistory({
-        id: "alert-1",
-        tradeSetupId: "setup-1",
-        sentAt: new Date("2026-09-01T10:12:00.000Z"),
-        channel: "console",
-        payload: { message: "Trade setup created" },
+      expect(
+        firstStorage.saveAlertHistory({
+          id: "alert-1",
+          tradeSetupId: "setup-1",
+          sentAt: new Date("2026-09-01T10:12:00.000Z"),
+          channel: "console",
+          payload: { message: "Trade setup created" },
+        }),
+      ).toBe(true);
+      expect(
+        firstStorage.saveAlertHistory({
+          id: "alert-1",
+          tradeSetupId: "setup-1",
+          sentAt: new Date("2026-09-01T10:13:00.000Z"),
+          channel: "console",
+          payload: { message: "Duplicate trade setup created" },
+        }),
+      ).toBe(false);
+      firstStorage.saveDataSourceFailure({
+        adapter: "dex-screener",
+        scanner: "live-monitor",
+        failedAt: new Date("2026-09-01T10:14:00.000Z"),
+        consecutiveFailures: 2,
+        nextRetryAt: new Date("2026-09-01T10:18:00.000Z"),
+        error: "rate limited",
+      });
+      firstStorage.saveDataSourceFailure({
+        adapter: "dex-screener",
+        scanner: "live-monitor",
+        failedAt: new Date("2026-09-01T10:15:00.000Z"),
+        consecutiveFailures: 3,
+        nextRetryAt: new Date("2026-09-01T10:23:00.000Z"),
+        error: "still rate limited",
       });
     } finally {
       firstStorage.close();
@@ -467,6 +495,16 @@ describe("simulation storage initialization", () => {
             lastScannedAt: new Date("2026-09-01T10:01:00.000Z"),
             lastScannedBlock: 123n,
             status: "healthy",
+          },
+        ],
+        dataSourceFailures: [
+          {
+            adapter: "dex-screener",
+            scanner: "live-monitor",
+            failedAt: new Date("2026-09-01T10:15:00.000Z"),
+            consecutiveFailures: 3,
+            nextRetryAt: new Date("2026-09-01T10:23:00.000Z"),
+            error: "still rate limited",
           },
         ],
         marketSnapshots: [
