@@ -26,6 +26,16 @@ export type ScanHealthRecord = {
   status: string;
 };
 
+export type DataSourceFailureRecord = {
+  adapter: string;
+  scanner: string;
+  failedAt: Date;
+  consecutiveFailures: number;
+  nextRetryAt: Date;
+  recoveredAt?: Date;
+  error: string;
+};
+
 export type MarketSnapshotRecord = {
   pair: string;
   capturedAt: Date;
@@ -110,6 +120,7 @@ export type ManualReplayPairImportResult = {
 export type ResumeState = {
   strategyVersions: StrategyVersionRecord[];
   scanHealth: ScanHealthRecord[];
+  dataSourceFailures: DataSourceFailureRecord[];
   marketSnapshots: MarketSnapshotRecord[];
   interestingWallets: InterestingWalletRecord[];
   tradeSetups: TradeSetupRecord[];
@@ -131,6 +142,16 @@ type ScanHealthRow = {
   last_scanned_at: string;
   last_scanned_block: string;
   status: string;
+};
+
+type DataSourceFailureRow = {
+  adapter: string;
+  scanner: string;
+  failed_at: string;
+  consecutive_failures: number;
+  next_retry_at: string;
+  recovered_at: string | null;
+  error: string;
 };
 
 type MarketSnapshotRow = {
@@ -218,6 +239,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   database.exec(schemaSql);
+  ensureColumn(database, "data_source_failures", "recovered_at", "TEXT");
 
   return {
     databasePath,
@@ -269,6 +291,41 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           lastScannedBlock: record.lastScannedBlock.toString(),
           status: record.status,
         });
+    },
+
+    saveDataSourceFailure(record: DataSourceFailureRecord) {
+      database
+        .prepare(
+          `INSERT INTO data_source_failures (
+             adapter, scanner, failed_at, consecutive_failures, next_retry_at, recovered_at, error
+           )
+           VALUES (@adapter, @scanner, @failedAt, @consecutiveFailures, @nextRetryAt, NULL, @error)
+           ON CONFLICT(adapter) DO UPDATE SET
+             scanner = excluded.scanner,
+             failed_at = excluded.failed_at,
+             consecutive_failures = excluded.consecutive_failures,
+             next_retry_at = excluded.next_retry_at,
+             recovered_at = excluded.recovered_at,
+             error = excluded.error`,
+        )
+        .run({
+          adapter: record.adapter,
+          scanner: record.scanner,
+          failedAt: toUtc(record.failedAt),
+          consecutiveFailures: record.consecutiveFailures,
+          nextRetryAt: toUtc(record.nextRetryAt),
+          error: record.error,
+        });
+    },
+
+    saveDataSourceRecovery(adapter: string, recoveredAt: Date) {
+      database
+        .prepare(
+          `UPDATE data_source_failures
+           SET recovered_at = @recoveredAt
+           WHERE adapter = @adapter`,
+        )
+        .run({ adapter, recoveredAt: toUtc(recoveredAt) });
     },
 
     saveMarketSnapshot(record: MarketSnapshotRecord) {
@@ -395,15 +452,11 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
     },
 
     saveAlertHistory(record: AlertHistoryRecord) {
-      database
+      const result = database
         .prepare(
           `INSERT INTO alert_history (id, trade_setup_id, sent_at, channel, payload_json)
            VALUES (@id, @tradeSetupId, @sentAt, @channel, @payloadJson)
-           ON CONFLICT(id) DO UPDATE SET
-             trade_setup_id = excluded.trade_setup_id,
-             sent_at = excluded.sent_at,
-             channel = excluded.channel,
-             payload_json = excluded.payload_json`,
+           ON CONFLICT(id) DO NOTHING`,
         )
         .run({
           id: record.id,
@@ -412,6 +465,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           channel: record.channel,
           payloadJson: JSON.stringify(record.payload),
         });
+      return result.changes === 1;
     },
 
     importManualReplayPairs(records: ManualReplayPairImport[]): ManualReplayPairImportResult {
@@ -598,6 +652,10 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .prepare("SELECT * FROM scan_health ORDER BY scanner")
           .all()
           .map((row) => toScanHealthRecord(row as ScanHealthRow)),
+        dataSourceFailures: database
+          .prepare("SELECT * FROM data_source_failures ORDER BY adapter")
+          .all()
+          .map((row) => toDataSourceFailureRecord(row as DataSourceFailureRow)),
         marketSnapshots: database
           .prepare("SELECT * FROM market_snapshots ORDER BY captured_at, pair")
           .all()
@@ -814,6 +872,19 @@ function roundMarketCap(value: number) {
   return Math.round(value);
 }
 
+function ensureColumn(
+  database: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (columns.some((existingColumn) => existingColumn.name === column)) {
+    return;
+  }
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 const schemaSql = `
 CREATE TABLE IF NOT EXISTS strategy_versions (
   id TEXT PRIMARY KEY,
@@ -827,6 +898,16 @@ CREATE TABLE IF NOT EXISTS scan_health (
   last_scanned_at TEXT NOT NULL,
   last_scanned_block TEXT NOT NULL,
   status TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS data_source_failures (
+  adapter TEXT PRIMARY KEY,
+  scanner TEXT NOT NULL,
+  failed_at TEXT NOT NULL,
+  consecutive_failures INTEGER NOT NULL,
+  next_retry_at TEXT NOT NULL,
+  recovered_at TEXT,
+  error TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS market_snapshots (
@@ -921,6 +1002,18 @@ function toScanHealthRecord(row: ScanHealthRow): ScanHealthRecord {
     lastScannedAt: new Date(row.last_scanned_at),
     lastScannedBlock: BigInt(row.last_scanned_block),
     status: row.status,
+  };
+}
+
+function toDataSourceFailureRecord(row: DataSourceFailureRow): DataSourceFailureRecord {
+  return {
+    adapter: row.adapter,
+    scanner: row.scanner,
+    failedAt: new Date(row.failed_at),
+    consecutiveFailures: row.consecutive_failures,
+    nextRetryAt: new Date(row.next_retry_at),
+    recoveredAt: row.recovered_at === null ? undefined : new Date(row.recovered_at),
+    error: row.error,
   };
 }
 

@@ -195,6 +195,125 @@ describe("DEX Screener live monitor", () => {
     expect(runOnce).toHaveBeenCalledTimes(2);
     expect(stop).toHaveBeenCalledTimes(1);
   });
+
+  it("persists adapter failures, scan gaps, and adapter backoff without blocking local simulation work", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const fetchPairs = vi
+      .fn<() => Promise<DexScreenerPair[]>>()
+      .mockRejectedValueOnce(new Error("DEX Screener rate limit"))
+      .mockRejectedValueOnce(new Error("DEX Screener rate limit"))
+      .mockResolvedValue([
+        pair({
+          pairAddress: "0x0000000000000000000000000000000000000007",
+          volume: { h1: 200_000 },
+        }),
+      ]);
+
+    await expect(
+      runDexScreenerMonitorOnce({
+        databasePath,
+        strategy,
+        fetchPairs,
+        capturedAt: new Date("2026-09-04T12:00:00.000Z"),
+        blockNumber: 200n,
+      }),
+    ).resolves.toMatchObject({
+      snapshotsStored: 0,
+      skippedPairs: 0,
+      dataSourceFailuresRecorded: 1,
+      backoffActive: true,
+      simulation: { tradeSetupsCreated: 0 },
+    });
+
+    await expect(
+      runDexScreenerMonitorOnce({
+        databasePath,
+        strategy,
+        fetchPairs,
+        capturedAt: new Date("2026-09-04T12:00:30.000Z"),
+        blockNumber: 201n,
+      }),
+    ).resolves.toMatchObject({
+      snapshotsStored: 0,
+      skippedPairs: 0,
+      dataSourceFailuresRecorded: 0,
+      backoffActive: true,
+      simulation: { tradeSetupsCreated: 0 },
+    });
+
+    expect(fetchPairs).toHaveBeenCalledTimes(1);
+
+    await expect(
+      runDexScreenerMonitorOnce({
+        databasePath,
+        strategy,
+        fetchPairs,
+        capturedAt: new Date("2026-09-04T12:02:01.000Z"),
+        blockNumber: 202n,
+      }),
+    ).resolves.toMatchObject({
+      snapshotsStored: 0,
+      dataSourceFailuresRecorded: 1,
+      backoffActive: true,
+    });
+
+    await expect(
+      runDexScreenerMonitorOnce({
+        databasePath,
+        strategy,
+        fetchPairs,
+        capturedAt: new Date("2026-09-04T12:06:02.000Z"),
+        blockNumber: 203n,
+      }),
+    ).resolves.toMatchObject({
+      snapshotsStored: 1,
+      dataSourceFailuresRecorded: 0,
+      backoffActive: false,
+    });
+
+    const storage = initializeSimulationStorage({ databasePath });
+    try {
+      const state = storage.getResumeState();
+      expect(state.dataSourceFailures).toEqual([
+        {
+          adapter: "dex-screener",
+          scanner: "dex-screener-monitor",
+          failedAt: new Date("2026-09-04T12:02:01.000Z"),
+          consecutiveFailures: 2,
+          nextRetryAt: new Date("2026-09-04T12:06:01.000Z"),
+          recoveredAt: new Date("2026-09-04T12:06:02.000Z"),
+          error: "DEX Screener rate limit",
+        },
+      ]);
+      expect(state.scanGaps).toEqual([
+        {
+          id: "dex-screener-monitor:dex-screener:2026-09-04T11:45:00.000Z:2026-09-04T12:00:00.000Z:data-source-failure",
+          scanner: "dex-screener-monitor",
+          startedAt: new Date("2026-09-04T11:45:00.000Z"),
+          endedAt: new Date("2026-09-04T12:00:00.000Z"),
+          reason: "data-source-failure:dex-screener",
+        },
+        {
+          id: "dex-screener-monitor:dex-screener:2026-09-04T11:47:01.000Z:2026-09-04T12:02:01.000Z:data-source-failure",
+          scanner: "dex-screener-monitor",
+          startedAt: new Date("2026-09-04T11:47:01.000Z"),
+          endedAt: new Date("2026-09-04T12:02:01.000Z"),
+          reason: "data-source-failure:dex-screener",
+        },
+      ]);
+      expect(state.scanHealth).toEqual([
+        {
+          scanner: "dex-screener-monitor",
+          lastScannedAt: new Date("2026-09-04T12:06:02.000Z"),
+          lastScannedBlock: 203n,
+          status: "ok",
+        },
+      ]);
+    } finally {
+      storage.close();
+    }
+  });
 });
 
 function pair(overrides: Partial<DexScreenerPair>): DexScreenerPair {
