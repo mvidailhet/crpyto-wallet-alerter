@@ -164,6 +164,10 @@ type SimulatedPositionRow = {
   status: string;
 };
 
+type StoredSimulatedPosition = SimulatedPositionRecord & {
+  pair: string;
+};
+
 type ScanGapRow = {
   id: string;
   scanner: string;
@@ -472,30 +476,49 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .all({ strategyVersionId: strategy.version })
           .map((row) => (row as { id: string }).id),
       );
-      const existingPositionIds = new Set(
-        database
-          .prepare(
-            "SELECT id FROM simulated_positions WHERE strategy_version_id = @strategyVersionId",
-          )
-          .all({ strategyVersionId: strategy.version })
-          .map((row) => (row as { id: string }).id),
-      );
+      const existingPositions = listSimulatedPositionsWithPairs(database, strategy.version);
+      const existingPositionIds = new Set(existingPositions.map((position) => position.id));
 
-      this.saveStrategyVersion({
-        id: strategy.version,
-        name: strategy.version,
-        createdAt: new Date(),
-        parameters: strategy as unknown as JsonObject,
-      });
+      database
+        .prepare(
+          `INSERT INTO strategy_versions (id, name, created_at, parameters_json)
+           VALUES (@id, @name, @createdAt, @parametersJson)
+           ON CONFLICT(id) DO NOTHING`,
+        )
+        .run({
+          id: strategy.version,
+          name: strategy.version,
+          createdAt: toUtc(new Date()),
+          parametersJson: JSON.stringify(strategy),
+        });
 
-      for (const pairSnapshots of groupSnapshotsByPair(snapshots)) {
-        const triggerSnapshot = pairSnapshots.find((snapshot) =>
-          qualifiesForStrategy(snapshot, strategy),
-        );
-        if (!triggerSnapshot) {
+      const snapshotsByPair = groupSnapshotsByPair(snapshots);
+      for (const position of existingPositions) {
+        if (position.status !== "open") {
           continue;
         }
 
+        const pairSnapshots = snapshotsByPair.get(position.pair) ?? [];
+        const exit = findConservativeExit(pairSnapshots, position.openedAt, {
+          stopLossMarketCapUsd: requiredNumber(position.entry, "stopLossMarketCapUsd"),
+          takeProfitMarketCapUsd: requiredNumber(position.entry, "takeProfitMarketCapUsd"),
+        });
+        if (!exit) {
+          continue;
+        }
+
+        this.saveSimulatedPosition({
+          ...position,
+          entry: { ...position.entry, ...exit },
+          status: exit.exitReason === "take-profit" ? "moonbag" : "closed",
+        });
+        result.positionsClosed += 1;
+      }
+
+      for (const { pairSnapshots, triggerSnapshot } of selectTradeSetupCandidates(
+        snapshotsByPair,
+        strategy,
+      )) {
         const setupId = `${strategy.version}:${triggerSnapshot.pair}`;
         const athMarketCapUsd = Number(triggerSnapshot.metrics.athMarketCapUsd);
         const plannedBuyLevels = strategy.plannedBuyLevels.map((level) =>
@@ -545,7 +568,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
             takeProfitMarketCapUsd: roundMarketCap(level.marketCapUsd * 2),
             moonbagPercent: 0,
           };
-          const exit = findConservativeExit(pairSnapshots, fillSnapshot, entry);
+          const exit = findConservativeExit(pairSnapshots, fillSnapshot.capturedAt, entry);
           this.saveSimulatedPosition({
             id: positionId,
             tradeSetupId: setupId,
@@ -615,7 +638,34 @@ function groupSnapshotsByPair(snapshots: MarketSnapshotRecord[]) {
     pairSnapshots.push(snapshot);
     grouped.set(snapshot.pair, pairSnapshots);
   }
-  return grouped.values();
+  return grouped;
+}
+
+function selectTradeSetupCandidates(
+  snapshotsByPair: Map<string, MarketSnapshotRecord[]>,
+  strategy: StrategyConfig,
+) {
+  return Array.from(snapshotsByPair.values())
+    .map((pairSnapshots) => ({
+      pairSnapshots,
+      triggerSnapshot: pairSnapshots.find((snapshot) => qualifiesForStrategy(snapshot, strategy)),
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        pairSnapshots: MarketSnapshotRecord[];
+        triggerSnapshot: MarketSnapshotRecord;
+      } => candidate.triggerSnapshot !== undefined,
+    )
+    .sort(
+      (left, right) =>
+        (numberMetric(right.triggerSnapshot, "oneHourVolumeUsd") ?? 0) -
+          (numberMetric(left.triggerSnapshot, "oneHourVolumeUsd") ?? 0) ||
+        left.triggerSnapshot.capturedAt.getTime() - right.triggerSnapshot.capturedAt.getTime() ||
+        left.triggerSnapshot.pair.localeCompare(right.triggerSnapshot.pair),
+    )
+    .slice(0, strategy.maximumActiveTradeSetups);
 }
 
 function qualifiesForStrategy(snapshot: MarketSnapshotRecord, strategy: StrategyConfig) {
@@ -654,14 +704,14 @@ function toPlannedMarketCapLevel(athMarketCapUsd: number, level: PlannedBuyLevel
 
 function findConservativeExit(
   snapshots: MarketSnapshotRecord[],
-  fillSnapshot: MarketSnapshotRecord,
+  openedAt: Date,
   entry: {
     stopLossMarketCapUsd: number;
     takeProfitMarketCapUsd: number;
   },
 ) {
   for (const snapshot of snapshots) {
-    if (snapshot.capturedAt <= fillSnapshot.capturedAt) {
+    if (snapshot.capturedAt <= openedAt) {
       continue;
     }
 
@@ -688,6 +738,38 @@ function findConservativeExit(
     }
   }
   return undefined;
+}
+
+function listSimulatedPositionsWithPairs(
+  database: Database.Database,
+  strategyVersionId: string,
+): StoredSimulatedPosition[] {
+  return database
+    .prepare(
+      `SELECT
+         simulated_positions.*,
+         trade_setups.pair
+       FROM simulated_positions
+       JOIN trade_setups ON trade_setups.id = simulated_positions.trade_setup_id
+       WHERE simulated_positions.strategy_version_id = @strategyVersionId
+       ORDER BY simulated_positions.opened_at, simulated_positions.id`,
+    )
+    .all({ strategyVersionId })
+    .map((row) => {
+      const typedRow = row as SimulatedPositionRow & { pair: string };
+      return {
+        ...toSimulatedPositionRecord(typedRow),
+        pair: typedRow.pair,
+      };
+    });
+}
+
+function requiredNumber(value: JsonObject, key: string) {
+  const metric = value[key];
+  if (typeof metric !== "number" || !Number.isFinite(metric)) {
+    throw new Error(`Simulated position entry is missing ${key}`);
+  }
+  return metric;
 }
 
 function snapshotLowMarketCap(snapshot: MarketSnapshotRecord) {

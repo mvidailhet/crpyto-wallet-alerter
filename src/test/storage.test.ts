@@ -251,6 +251,133 @@ describe("simulation storage initialization", () => {
     }
   });
 
+  it("updates open simulated positions when later snapshots reach an exit", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const storage = initializeSimulationStorage({ databasePath });
+
+    try {
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000cc",
+        capturedAt: new Date("2026-09-03T10:00:00.000Z"),
+        blockNumber: 300n,
+        metrics: {
+          marketCapUsd: 14_000_000,
+          athMarketCapUsd: 20_000_000,
+          athCapturedAt: "2026-09-02T10:00:00.000Z",
+          pairAgeHours: 120,
+          liquidityUsd: 300_000,
+          oneHourVolumeUsd: 150_000,
+        },
+      });
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000cc",
+        capturedAt: new Date("2026-09-03T11:00:00.000Z"),
+        blockNumber: 301n,
+        metrics: { marketCapUsd: 13_000_000 },
+      });
+
+      expect(storage.simulateTradeSetups(strategy)).toMatchObject({
+        positionsOpened: 1,
+        positionsClosed: 0,
+      });
+
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000cc",
+        capturedAt: new Date("2026-09-03T12:00:00.000Z"),
+        blockNumber: 302n,
+        metrics: { marketCapUsd: 8_000_000 },
+      });
+
+      expect(storage.simulateTradeSetups(strategy)).toMatchObject({
+        tradeSetupsCreated: 0,
+        tradeSetupsUpdated: 1,
+        positionsOpened: 1,
+        positionsClosed: 1,
+      });
+      expect(storage.getResumeState().simulatedPositions[0]).toMatchObject({
+        status: "closed",
+        entry: {
+          marketCapUsd: 13_000_000,
+          closedAt: "2026-09-03T12:00:00.000Z",
+          exitMarketCapUsd: 9_000_000,
+          exitReason: "stop-loss",
+        },
+      });
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("keeps only the highest-volume active trade setups allowed by the strategy version", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const storage = initializeSimulationStorage({ databasePath });
+    const cappedStrategy = { ...strategy, maximumActiveTradeSetups: 2 };
+
+    try {
+      for (const [index, oneHourVolumeUsd] of [120_000, 300_000, 200_000].entries()) {
+        storage.saveMarketSnapshot({
+          pair: `0x00000000000000000000000000000000000000d${index}`,
+          capturedAt: new Date(`2026-09-04T1${index}:00:00.000Z`),
+          blockNumber: BigInt(400 + index),
+          metrics: {
+            marketCapUsd: 14_000_000,
+            athMarketCapUsd: 20_000_000,
+            athCapturedAt: "2026-09-03T10:00:00.000Z",
+            pairAgeHours: 120,
+            liquidityUsd: 300_000,
+            oneHourVolumeUsd,
+          },
+        });
+      }
+
+      expect(storage.simulateTradeSetups(cappedStrategy)).toMatchObject({
+        tradeSetupsCreated: 2,
+      });
+      expect(storage.getResumeState().tradeSetups.map((setup) => setup.pair)).toEqual([
+        "0x00000000000000000000000000000000000000d1",
+        "0x00000000000000000000000000000000000000d2",
+      ]);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("does not overwrite an existing stored strategy version during duplicate scans", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const storage = initializeSimulationStorage({ databasePath });
+
+    try {
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000ee",
+        capturedAt: new Date("2026-09-05T10:00:00.000Z"),
+        blockNumber: 500n,
+        metrics: {
+          marketCapUsd: 14_000_000,
+          athMarketCapUsd: 20_000_000,
+          athCapturedAt: "2026-09-04T10:00:00.000Z",
+          pairAgeHours: 120,
+          liquidityUsd: 300_000,
+          oneHourVolumeUsd: 150_000,
+        },
+      });
+
+      storage.simulateTradeSetups(strategy);
+      storage.simulateTradeSetups({ ...strategy, minimumLiquidityUsd: 1 });
+
+      expect(storage.getResumeState().strategyVersions).toEqual([
+        expect.objectContaining({
+          id: "baseline-test",
+          parameters: expect.objectContaining({ minimumLiquidityUsd: 250_000 }),
+        }),
+      ]);
+    } finally {
+      storage.close();
+    }
+  });
+
   it("preserves resumable simulation state after reopening the database", async () => {
     const dataDirectory = await createTempDir();
     const databasePath = join(dataDirectory, "simulation.sqlite");
