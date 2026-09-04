@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { buildReplayAnalysisRows, type ReplayAnalysisRow } from "../analysis/replay-results.js";
+import { rankTradeSetups, type TradeSetupRanking } from "../analysis/trade-setup-ranking.js";
 import type {
   MarketSnapshotRecord,
   ResumeState,
@@ -375,7 +376,7 @@ function renderHtml(
     <div><strong>Simulated positions</strong><br>${state.simulatedPositions.length}</div>
     <div><strong>Realized PnL multiple</strong><br>${formatNumber(totalRealized)}</div>
   </section>
-  ${renderSetupTable(state.tradeSetups)}
+  ${renderSetupTable(state.tradeSetups, rankTradeSetups(state))}
   ${renderPositionTable(rows)}
   ${renderScanGapTable(state)}
   ${renderDataSourceFailureTable(state)}
@@ -448,15 +449,22 @@ function renderReplayAnalysisTable(rows: ReplayAnalysisRow[]) {
   </table>`;
 }
 
-function renderSetupTable(tradeSetups: TradeSetupRecord[]) {
+function renderSetupTable(tradeSetups: TradeSetupRecord[], rankings: TradeSetupRanking[]) {
+  const rankingById = new Map(rankings.map((ranking) => [ranking.tradeSetupId, ranking]));
+  const orderedSetups = [...tradeSetups].sort(
+    (left, right) =>
+      (rankingById.get(right.id)?.score ?? 0) - (rankingById.get(left.id)?.score ?? 0) ||
+      left.id.localeCompare(right.id),
+  );
+
   return `<h2>Trade setups</h2>
   <table>
-    <thead><tr><th>Strategy version</th><th>Trade setup</th><th>Pair</th><th>Created</th><th>Planned buy levels</th></tr></thead>
-    <tbody>${tradeSetups
-      .map(
-        (setup) =>
-          `<tr><td>${escapeHtml(setup.strategyVersionId)}</td><td>${escapeHtml(setup.id)}</td><td>${escapeHtml(setup.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(setup.createdAt))}</td><td>${escapeHtml(JSON.stringify(setup.plannedBuyLevels))}</td></tr>`,
-      )
+    <thead><tr><th>Strategy version</th><th>Trade setup</th><th>Pair</th><th>Created</th><th>Planned buy levels</th><th>Wallet boost</th><th>Ranking explanation</th></tr></thead>
+    <tbody>${orderedSetups
+      .map((setup) => {
+        const ranking = rankingById.get(setup.id);
+        return `<tr><td>${escapeHtml(setup.strategyVersionId)}</td><td>${escapeHtml(setup.id)}</td><td>${escapeHtml(setup.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(setup.createdAt))}</td><td>${escapeHtml(JSON.stringify(setup.plannedBuyLevels))}</td><td>${ranking?.walletBoost ?? 0}</td><td>${escapeHtml(ranking?.explanation ?? "No interesting-wallet evidence for this pair.")}</td></tr>`;
+      })
       .join("")}</tbody>
   </table>`;
 }

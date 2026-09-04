@@ -145,6 +145,9 @@ describe("simulation reports", () => {
       expect(html).toContain("Manual wallet tags");
       expect(html).toContain("Manual pair tags");
       expect(html).toContain("historical-runner-buy");
+      expect(html).toContain(
+        "Boosted by 1 interesting wallet(s): 0x00000000000000000000000000000000000000c1.",
+      );
       expect(html).toContain("Chart markers");
       expect(html).toContain("<svg");
       expect(html).toContain("setup-created");

@@ -80,6 +80,14 @@ _Avoid_: Outage
 A source-specific integration that fetches or reconstructs market, wallet, or alert data for the project.
 _Avoid_: Provider, API client
 
+**Trade Setup Ranking**:
+An ordering of trade setups by score, where an interesting-wallet boost can raise a setup's position without wallet evidence being required for the setup to exist.
+_Avoid_: Score, priority
+
+**Wallet Boost**:
+The ranking increase a trade setup receives when interesting wallets have evidence tied to its pair, explained alongside the ranking.
+_Avoid_: Wallet score
+
 **Alert**:
 A single outbound notification about a monitor event worth a human's attention: a new trade setup, a simulated fill, a stop loss, a take profit, a repeated data-source failure, or a daily summary.
 _Avoid_: Signal, notification spam
