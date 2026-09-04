@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { buildReplayAnalysisRows, type ReplayAnalysisRow } from "../analysis/replay-results.js";
 import type {
-  ManualReplayPairRecord,
   MarketSnapshotRecord,
   ResumeState,
   SimulatedPositionRecord,
@@ -12,6 +12,7 @@ import type {
 export type GenerateSimulationReportsOptions = {
   reportsDirectory?: string;
   generatedAt?: Date;
+  replayStrategyVersionIds?: string[];
 };
 
 export type GeneratedSimulationReports = {
@@ -48,14 +49,6 @@ type ChartMarker = {
   label: string;
 };
 
-type ReplayAnalysisRow = {
-  strategyVersionId: string;
-  pair: string;
-  symbol: string | undefined;
-  label: string;
-  outcome: "missed" | "triggered" | "filled" | "stopped" | "take-profit" | "moonbag";
-};
-
 export async function generateSimulationReports(
   state: ResumeState,
   options: GenerateSimulationReportsOptions = {},
@@ -66,7 +59,7 @@ export async function generateSimulationReports(
   const htmlPath = join(reportsDirectory, `${basename}.html`);
   const csvPath = join(reportsDirectory, `${basename}.csv`);
   const rows = buildPositionRows(state);
-  const replayRows = buildReplayAnalysisRows(state);
+  const replayRows = buildReplayAnalysisRows(state, options.replayStrategyVersionIds);
   const markers = buildChartMarkers(state);
 
   await mkdir(reportsDirectory, { recursive: true });
@@ -112,35 +105,6 @@ function buildPositionRows(state: ResumeState): PositionReportRow[] {
       moonbagPercent: numberEntry(position, "moonbagPercent"),
     };
   });
-}
-
-function buildReplayAnalysisRows(state: ResumeState): ReplayAnalysisRow[] {
-  if (state.manualReplayPairs.length === 0) {
-    return [];
-  }
-
-  const positionsBySetupId = groupPositionsBySetupId(state.simulatedPositions);
-  const strategyIds = state.strategyVersions.map((strategy) => strategy.id);
-  return strategyIds.flatMap((strategyVersionId) =>
-    state.manualReplayPairs
-      .filter((pair): pair is ManualReplayPairRecord & { pairAddress: string } =>
-        Boolean(pair.pairAddress),
-      )
-      .map((pair) => {
-        const setup = state.tradeSetups.find(
-          (candidate) =>
-            candidate.strategyVersionId === strategyVersionId && candidate.pair === pair.pairAddress,
-        );
-        const positions = setup ? (positionsBySetupId.get(setup.id) ?? []) : [];
-        return {
-          strategyVersionId,
-          pair: pair.pairAddress,
-          symbol: pair.symbol,
-          label: pair.label,
-          outcome: replayOutcome(setup, positions),
-        };
-      }),
-  );
 }
 
 function buildChartMarkers(state: ResumeState): ChartMarker[] {
@@ -645,38 +609,6 @@ function countBy(values: string[]) {
     counts.set(value, (counts.get(value) ?? 0) + 1);
   }
   return counts;
-}
-
-function groupPositionsBySetupId(positions: SimulatedPositionRecord[]) {
-  const grouped = new Map<string, SimulatedPositionRecord[]>();
-  for (const position of positions) {
-    const setupPositions = grouped.get(position.tradeSetupId) ?? [];
-    setupPositions.push(position);
-    grouped.set(position.tradeSetupId, setupPositions);
-  }
-  return grouped;
-}
-
-function replayOutcome(
-  setup: TradeSetupRecord | undefined,
-  positions: SimulatedPositionRecord[],
-): ReplayAnalysisRow["outcome"] {
-  if (!setup) {
-    return "missed";
-  }
-  if (positions.some((position) => position.status === "moonbag")) {
-    return "moonbag";
-  }
-  if (positions.some((position) => stringEntry(position, "exitReason") === "take-profit")) {
-    return "take-profit";
-  }
-  if (positions.some((position) => stringEntry(position, "exitReason") === "stop-loss")) {
-    return "stopped";
-  }
-  if (positions.length > 0) {
-    return "filled";
-  }
-  return "triggered";
 }
 
 function formatFileTimestamp(date: Date) {

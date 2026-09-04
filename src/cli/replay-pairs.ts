@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import { getAddress } from "viem";
 
+import { buildReplayAnalysisRows, summarizeReplayOutcomes } from "../analysis/replay-results.js";
 import { reconstructReplaySnapshots } from "../analysis/replay-snapshots.js";
 import { loadConfig } from "../config/env.js";
 import { fetchV3Swaps } from "../dex/v3/swaps.js";
@@ -112,21 +113,31 @@ export async function runReplayPairsCommand(
     });
 
     try {
+      const replayPairAddresses = new Set(
+        storage
+          .listManualReplayPairs()
+          .flatMap((pair) => (pair.pairAddress ? [pair.pairAddress] : [])),
+      );
       for (const version of strategyVersions) {
         const strategy = await loadStrategyConfig(version, {
           configDirectory: options.configDirectory,
         });
-        storage.simulateTradeSetups(strategy);
+        storage.simulateTradeSetups(strategy, {
+          pairs: replayPairAddresses,
+          snapshotSource: "historical-replay",
+        });
       }
 
-      const state = storage.getResumeState();
-      const summary = summarizeReplayOutcomes(state, strategyVersions);
-      const report = await generateSimulationReports(state, {
+      const replayResults = toHistoricalReplayState(storage.getResumeState(), strategyVersions);
+      const replayRows = buildReplayAnalysisRows(replayResults, strategyVersions);
+      const summary = summarizeReplayOutcomes(replayRows);
+      const report = await generateSimulationReports(replayResults, {
         reportsDirectory: options.reportsDirectory,
         generatedAt: options.generatedAt,
+        replayStrategyVersionIds: strategyVersions,
       });
       writeLine(
-        `Ran ${strategyVersions.length} strategy version(s): ${summary.triggered} triggered, ${summary.filled} filled, ${summary.stopped} stopped, ${summary.takeProfitHits} take-profit hit, ${summary.moonbags} moonbag, ${summary.missed} missed.`,
+        `Ran ${strategyVersions.length} strategy version(s): ${summary.triggered} triggered, ${summary.filled} filled, ${summary.stopLosses} stop-loss, ${summary.takeProfitHits} take-profit hit, ${summary.moonbags} moonbag, ${summary.missed} missed.`,
       );
       writeLine(`Wrote simulation reports: ${report.htmlPath} and ${report.csvPath}.`);
     } finally {
@@ -430,55 +441,34 @@ function readRepeatedFlag(args: string[], flag: string) {
   return values;
 }
 
-function summarizeReplayOutcomes(state: ResumeState, strategyVersionIds: string[]) {
-  const manualPairsWithAddresses = state.manualReplayPairs.filter(
-    (pair): pair is ManualReplayPairRecord & { pairAddress: string } => Boolean(pair.pairAddress),
-  );
-  const summary = {
-    triggered: 0,
-    filled: 0,
-    stopped: 0,
-    takeProfitHits: 0,
-    moonbags: 0,
-    missed: 0,
-  };
-
-  for (const strategyVersionId of strategyVersionIds) {
-    for (const pair of manualPairsWithAddresses) {
-      const setup = state.tradeSetups.find(
-        (candidate) =>
-          candidate.strategyVersionId === strategyVersionId && candidate.pair === pair.pairAddress,
-      );
-      if (!setup) {
-        summary.missed += 1;
-        continue;
-      }
-
-      summary.triggered += 1;
-      const positions = state.simulatedPositions.filter(
-        (position) => position.tradeSetupId === setup.id,
-      );
-      if (positions.length > 0) {
-        summary.filled += 1;
-      }
-      if (positions.some((position) => position.entry.exitReason === "stop-loss")) {
-        summary.stopped += 1;
-      }
-      if (positions.some((position) => position.entry.exitReason === "take-profit")) {
-        summary.takeProfitHits += 1;
-      }
-      if (positions.some((position) => position.status === "moonbag")) {
-        summary.moonbags += 1;
-      }
-    }
-  }
-
-  return summary;
-}
-
 function readBigIntFlag(args: string[], flag: string) {
   const value = readFlag(args, flag);
   return value === undefined ? undefined : BigInt(value);
+}
+
+function toHistoricalReplayState(state: ResumeState, strategyVersionIds: string[]): ResumeState {
+  const replayPairAddresses = new Set(
+    state.manualReplayPairs.flatMap((pair) => (pair.pairAddress ? [pair.pairAddress] : [])),
+  );
+  const marketSnapshots = state.marketSnapshots.filter(
+    (snapshot) =>
+      replayPairAddresses.has(snapshot.pair) && snapshot.metrics.source === "historical-replay",
+  );
+  const replaySnapshotPairs = new Set(marketSnapshots.map((snapshot) => snapshot.pair));
+  const tradeSetups = state.tradeSetups.filter((setup) => replaySnapshotPairs.has(setup.pair));
+  const tradeSetupIds = new Set(tradeSetups.map((setup) => setup.id));
+
+  return {
+    ...state,
+    marketSnapshots,
+    strategyVersions: state.strategyVersions.filter((strategy) =>
+      strategyVersionIds.includes(strategy.id),
+    ),
+    tradeSetups,
+    simulatedPositions: state.simulatedPositions.filter((position) =>
+      tradeSetupIds.has(position.tradeSetupId),
+    ),
+  };
 }
 
 function readIntegerFlag(args: string[], flag: string) {

@@ -189,6 +189,7 @@ describe("replay pairs command", () => {
         "0x0000000000000000000000000000000000000001,0x00000000000000000000000000000000000000aa,STOP,runner,,2026-09-01T12:00:00.000Z",
         "0x0000000000000000000000000000000000000002,0x00000000000000000000000000000000000000bb,MOON,runner,,2026-09-01T12:00:00.000Z",
         "0x0000000000000000000000000000000000000003,0x00000000000000000000000000000000000000cc,MISS,failed,,2026-09-01T12:00:00.000Z",
+        "0x0000000000000000000000000000000000000004,,NOPAIR,runner,,2026-09-01T12:00:00.000Z",
       ].join("\n"),
       "utf8",
     );
@@ -220,6 +221,12 @@ describe("replay pairs command", () => {
       saveReplayMarket(storage, "0x00000000000000000000000000000000000000cc", [
         { at: "2026-09-01T12:00:00.000Z", marketCapUsd: 5_000_000 },
       ]);
+      saveReplayMarket(
+        storage,
+        "0x00000000000000000000000000000000000000dd",
+        [{ at: "2026-09-01T12:00:00.000Z", marketCapUsd: 16_000_000 }],
+        "live-monitor",
+      );
     } finally {
       storage.close();
     }
@@ -233,7 +240,7 @@ describe("replay pairs command", () => {
     });
 
     expect(output).toContain(
-      "Ran 1 strategy version(s): 2 triggered, 2 filled, 1 stopped, 1 take-profit hit, 1 moonbag, 1 missed.",
+      "Ran 1 strategy version(s): 2 triggered, 2 filled, 1 stop-loss, 1 take-profit hit, 1 moonbag, 2 missed.",
     );
     expect(await readdir(reportsDirectory)).toEqual([
       "simulation-20260901-170000.csv",
@@ -243,7 +250,7 @@ describe("replay pairs command", () => {
     expect(csv).toContain("replayAnalysis");
     expect(csv).toContain("strategyVersionId,pair,symbol,label,outcome");
     expect(csv).toContain(
-      "test-replay,0x00000000000000000000000000000000000000AA,STOP,runner,stopped",
+      "test-replay,0x00000000000000000000000000000000000000AA,STOP,runner,stop-loss",
     );
     expect(csv).toContain(
       "test-replay,0x00000000000000000000000000000000000000bb,MOON,runner,moonbag",
@@ -251,6 +258,10 @@ describe("replay pairs command", () => {
     expect(csv).toContain(
       "test-replay,0x00000000000000000000000000000000000000cc,MISS,failed,missed",
     );
+    expect(csv).toContain(
+      "test-replay,0x0000000000000000000000000000000000000004,NOPAIR,runner,missed",
+    );
+    expect(csv).not.toContain("0x00000000000000000000000000000000000000dd");
   });
 
   it("reconstructs imported pair snapshots and resumes from stored replay progress", async () => {
@@ -407,6 +418,7 @@ function saveReplayMarket(
       Pick<MarketSnapshotRecord["metrics"], "marketCapUsd" | "lowMarketCapUsd" | "highMarketCapUsd">
     >
   >,
+  source = "historical-replay",
 ) {
   snapshots.forEach((snapshot, index) => {
     storage.saveMarketSnapshot({
@@ -414,7 +426,7 @@ function saveReplayMarket(
       capturedAt: new Date(snapshot.at),
       blockNumber: BigInt(index + 1),
       metrics: {
-        source: "historical-replay",
+        source,
         marketCapUsd: snapshot.marketCapUsd,
         lowMarketCapUsd: snapshot.lowMarketCapUsd,
         highMarketCapUsd: snapshot.highMarketCapUsd,
