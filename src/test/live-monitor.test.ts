@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { AlertAdapter } from "../alerts/adapter.js";
 import {
   runDexScreenerMonitorOnce,
   startDexScreenerMonitor,
@@ -164,6 +165,65 @@ describe("DEX Screener live monitor", () => {
       skippedPairs: 4,
       simulation: { tradeSetupsCreated: 0, tradeSetupsUpdated: 1 },
     });
+  });
+
+  it("sends a Telegram alert for a new trade setup and does not resend it on later scans", async () => {
+    const databasePath = join(await createTempDir(), "simulation.sqlite");
+    const seededStorage = initializeSimulationStorage({ databasePath });
+    try {
+      seededStorage.saveMarketSnapshot({
+        pair: "0x0000000000000000000000000000000000000001",
+        capturedAt: new Date("2026-09-03T12:00:00.000Z"),
+        blockNumber: 100n,
+        metrics: {
+          marketCapUsd: 20_000_000,
+          athMarketCapUsd: 20_000_000,
+          athCapturedAt: "2026-09-03T12:00:00.000Z",
+          pairAgeHours: 144,
+          liquidityUsd: 500_000,
+          oneHourVolumeUsd: 200_000,
+        },
+      });
+    } finally {
+      seededStorage.close();
+    }
+
+    const send = vi.fn<AlertAdapter["send"]>().mockResolvedValue(undefined);
+    const alertAdapters: AlertAdapter[] = [{ channel: "telegram", send }];
+    const fetchPairs = vi.fn<() => Promise<DexScreenerPair[]>>().mockResolvedValue([
+      pair({
+        pairAddress: "0x0000000000000000000000000000000000000001",
+        pairCreatedAt: new Date("2026-08-28T12:00:00.000Z").getTime(),
+        marketCap: 16_000_000,
+        fdv: 16_000_000,
+        liquidity: { usd: 500_000 },
+        volume: { h1: 600_000 },
+      }),
+    ]);
+
+    const first = await runDexScreenerMonitorOnce({
+      databasePath,
+      strategy,
+      fetchPairs,
+      alertAdapters,
+      capturedAt: new Date("2026-09-04T12:00:00.000Z"),
+      blockNumber: 123n,
+    });
+    expect(first.simulation.tradeSetupsCreated).toBe(1);
+    const setupAlerts = send.mock.calls.filter(([text]) => text.startsWith("New trade setup "));
+    expect(setupAlerts).toHaveLength(1);
+    expect(first.alertsSent).toBe(send.mock.calls.length);
+
+    send.mockClear();
+    await runDexScreenerMonitorOnce({
+      databasePath,
+      strategy,
+      fetchPairs,
+      alertAdapters,
+      capturedAt: new Date("2026-09-04T12:15:00.000Z"),
+      blockNumber: 124n,
+    });
+    expect(send.mock.calls.filter(([text]) => text.startsWith("New trade setup "))).toHaveLength(0);
   });
 
   it("runs immediately, survives scan failures, and then scans every configured interval until stopped", async () => {

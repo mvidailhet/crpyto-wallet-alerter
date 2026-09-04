@@ -52,6 +52,10 @@ _Avoid_: Filtered coin
 A paper-traded entry opened when a trade setup reaches one of its planned buy levels.
 _Avoid_: Real position, order
 
+**Fill**:
+The moment a simulated position is opened because a trade setup reached one of its planned buy levels.
+_Avoid_: Execution, order fill
+
 **Stop Loss**:
 The simulated exit level where a simulated position is closed after a fixed loss from its entry.
 _Avoid_: Risk limit
@@ -75,3 +79,11 @@ _Avoid_: Outage
 **Adapter**:
 A source-specific integration that fetches or reconstructs market, wallet, or alert data for the project.
 _Avoid_: Provider, API client
+
+**Alert**:
+A single outbound notification about a monitor event worth a human's attention: a new trade setup, a simulated fill, a stop loss, a take profit, a repeated data-source failure, or a daily summary.
+_Avoid_: Signal, notification spam
+
+**Sent Alert History**:
+The persisted record of alerts already delivered, keyed so repeated scans and restarts never resend the same alert.
+_Avoid_: Alert log, dedupe cache
