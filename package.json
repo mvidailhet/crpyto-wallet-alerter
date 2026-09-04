@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "find-buyers": "tsx src/cli/find-buyers.ts",
+    "monitor": "tsx src/cli/monitor.ts",
     "replay-pairs": "tsx src/cli/replay-pairs.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

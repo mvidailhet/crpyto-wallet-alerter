@@ -17,6 +17,8 @@ cp .env.example .env
 ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com/
 LOG_CHUNK_SIZE=1000
 RPC_TIMEOUT_MS=10000
+SIMULATION_DATA_DIR=data
+STRATEGY_VERSION=baseline-96h
 ```
 
 ## Usage
@@ -48,6 +50,14 @@ Use raw mode to include decoded MVP trade records:
 ```bash
 npm run find-buyers -- --token 0x... --from 2026-09-01 --to 2026-09-02 --raw
 ```
+
+Run continuous DEX Screener monitoring:
+
+```bash
+npm run monitor
+```
+
+The monitor scans Robinhood Chain every 15 minutes using the configured strategy, stores SQLite state under `data/simulation.sqlite` by default, records skipped pair reasons, and updates simulated positions from newly stored snapshots.
 
 ## Robinhood Chain Assumptions
 

@@ -8,6 +8,7 @@ export type AppConfig = {
   rpcTimeoutMs: number;
   simulationDatabasePath?: string;
   simulationDataDirectory?: string;
+  strategyVersion: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -16,6 +17,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const rpcTimeoutMs = Number.parseInt(env.RPC_TIMEOUT_MS ?? "10000", 10);
   const simulationDatabasePath = env.SIMULATION_DATABASE_PATH;
   const simulationDataDirectory = env.SIMULATION_DATA_DIR;
+  const strategyVersion = env.STRATEGY_VERSION ?? "baseline-96h";
 
   if (logChunkSize <= 0n) {
     throw new Error("LOG_CHUNK_SIZE must be a positive integer");
@@ -25,5 +27,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error("RPC_TIMEOUT_MS must be a positive integer");
   }
 
-  return { rpcUrl, logChunkSize, rpcTimeoutMs, simulationDatabasePath, simulationDataDirectory };
+  return {
+    rpcUrl,
+    logChunkSize,
+    rpcTimeoutMs,
+    simulationDatabasePath,
+    simulationDataDirectory,
+    strategyVersion,
+  };
 }
