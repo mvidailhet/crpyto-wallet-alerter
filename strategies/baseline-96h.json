@@ -1,0 +1,37 @@
+{
+  "version": "baseline-96h",
+  "chain": "robinhood",
+  "scanIntervalMinutes": 15,
+  "topPairsByOneHourVolume": 50,
+  "minimumPairAgeHours": 96,
+  "minimumLiquidityUsd": 250000,
+  "minimumOneHourVolumeUsd": 100000,
+  "athMarketCapUsd": {
+    "minimum": 7000000,
+    "maximum": 25000000
+  },
+  "currentMarketCapWithinAthPercent": 30,
+  "athAgeHours": {
+    "minimum": 12,
+    "maximum": 168
+  },
+  "plannedBuyLevels": [
+    {
+      "athPullbackPercent": 35,
+      "allocationPercent": 25
+    },
+    {
+      "athPullbackPercent": 50,
+      "allocationPercent": 25
+    },
+    {
+      "athPullbackPercent": 65,
+      "allocationPercent": 25
+    },
+    {
+      "athPullbackPercent": 80,
+      "allocationPercent": 25
+    }
+  ],
+  "maximumActiveTradeSetups": 10
+}
