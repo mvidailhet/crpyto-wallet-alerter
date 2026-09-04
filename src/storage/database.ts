@@ -7,7 +7,7 @@ export function createSimulationDatabase(path: string): SimulationDatabase {
   database.exec(`
     CREATE TABLE IF NOT EXISTS strategy_versions (
       id INTEGER PRIMARY KEY,
-      version TEXT NOT NULL UNIQUE,
+      version TEXT NOT NULL,
       config_json TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ) STRICT

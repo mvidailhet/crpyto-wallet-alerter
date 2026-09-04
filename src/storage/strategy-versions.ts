@@ -12,13 +12,13 @@ export function persistExecutedStrategyVersion(
   strategy: StrategyConfig,
 ): PersistedStrategyVersion {
   const configJson = JSON.stringify(strategy);
-  database
-    .prepare("INSERT OR IGNORE INTO strategy_versions (version, config_json) VALUES (?, ?)")
+  const result = database
+    .prepare("INSERT INTO strategy_versions (version, config_json) VALUES (?, ?)")
     .run(strategy.version, configJson);
 
   const row = database
-    .prepare("SELECT id, version, config_json FROM strategy_versions WHERE version = ?")
-    .get(strategy.version);
+    .prepare("SELECT id, version, config_json FROM strategy_versions WHERE id = ?")
+    .get(result.lastInsertRowid);
 
   if (!isStrategyVersionRow(row)) {
     throw new Error(`Strategy version ${strategy.version} was not persisted`);

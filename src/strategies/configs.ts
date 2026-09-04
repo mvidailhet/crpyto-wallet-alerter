@@ -45,8 +45,17 @@ export async function loadStrategyConfig(
   const configDirectory = options.configDirectory ?? defaultConfigDirectory;
   const configPath = join(configDirectory, `${version}.json`);
   const rawConfig = await readFile(configPath, "utf8");
-  const parsedConfig = JSON.parse(rawConfig) as unknown;
+  const parsedConfig = parseJsonConfig(version, rawConfig);
   return parseStrategyConfig(version, parsedConfig);
+}
+
+function parseJsonConfig(version: string, rawConfig: string): unknown {
+  try {
+    return JSON.parse(rawConfig) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid strategy config ${version}: config must be valid JSON (${message})`);
+  }
 }
 
 function parseStrategyConfig(expectedVersion: string, value: unknown): StrategyConfig {

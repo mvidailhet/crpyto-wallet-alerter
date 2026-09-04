@@ -59,10 +59,19 @@ describe("strategy config loading", () => {
       "plannedBuyLevels allocationPercent values must total 100",
     );
   });
+
+  it("adds strategy context to malformed JSON errors", async () => {
+    const configDirectory = await mkdtemp(join(tmpdir(), "strategy-configs-"));
+    await writeFile(join(configDirectory, "broken.json"), "{", "utf8");
+
+    await expect(loadStrategyConfig("broken", { configDirectory })).rejects.toThrow(
+      "Invalid strategy config broken: config must be valid JSON",
+    );
+  });
 });
 
 describe("executed strategy version persistence", () => {
-  it("copies the exact strategy config JSON into SQLite immutably", async () => {
+  it("copies the exact strategy config JSON for each execution into SQLite immutably", async () => {
     const database = createSimulationDatabase(":memory:");
     const strategy = await loadStrategyConfig("baseline-96h");
 
@@ -72,9 +81,9 @@ describe("executed strategy version persistence", () => {
       minimumLiquidityUsd: 500_000,
     });
 
-    expect(first.strategyVersionId).toBe(second.strategyVersionId);
-    expect(JSON.parse(second.configJson)).toMatchObject({ minimumLiquidityUsd: 250_000 });
-    expect(second.configJson).toBe(first.configJson);
+    expect(first.strategyVersionId).not.toBe(second.strategyVersionId);
+    expect(JSON.parse(first.configJson)).toMatchObject({ minimumLiquidityUsd: 250_000 });
+    expect(JSON.parse(second.configJson)).toMatchObject({ minimumLiquidityUsd: 500_000 });
 
     database.close();
   });
