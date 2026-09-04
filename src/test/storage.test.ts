@@ -62,6 +62,7 @@ describe("simulation storage initialization", () => {
       expect(storage.listTables()).toEqual([
         "alert_history",
         "data_source_failures",
+        "historical_replay_progress",
         "interesting_wallets",
         "manual_replay_pairs",
         "market_snapshots",

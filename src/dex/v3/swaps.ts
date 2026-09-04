@@ -40,6 +40,7 @@ export async function fetchV3Swaps(args: {
 
   const swaps: DecodedV3Swap[] = [];
   const chunks = chunkBlockRange(args.fromBlock, args.toBlock, args.chunkSize);
+  const blocksByNumber = new Map<bigint, Awaited<ReturnType<typeof args.client.getBlock>>>();
 
   for (const pool of args.pools) {
     const tokens = poolTokens.get(pool.pool);
@@ -60,7 +61,7 @@ export async function fetchV3Swaps(args: {
 
         const [transaction, block] = await Promise.all([
           args.client.getTransaction({ hash: log.transactionHash }),
-          args.client.getBlock({ blockNumber: log.blockNumber }),
+          getCachedBlock(args.client, blocksByNumber, log.blockNumber),
         ]);
 
         swaps.push({
@@ -72,6 +73,7 @@ export async function fetchV3Swaps(args: {
           token1: tokens.token1,
           amount0: log.args.amount0,
           amount1: log.args.amount1,
+          sqrtPriceX96: log.args.sqrtPriceX96,
           transactionFrom: getAddress(transaction.from),
         });
       }
@@ -79,4 +81,18 @@ export async function fetchV3Swaps(args: {
   }
 
   return swaps;
+}
+
+async function getCachedBlock(
+  client: PublicClient,
+  blocksByNumber: Map<bigint, Awaited<ReturnType<PublicClient["getBlock"]>>>,
+  blockNumber: bigint,
+) {
+  const cached = blocksByNumber.get(blockNumber);
+  if (cached) {
+    return cached;
+  }
+  const block = await client.getBlock({ blockNumber });
+  blocksByNumber.set(blockNumber, block);
+  return block;
 }
