@@ -59,6 +59,35 @@ npm run monitor
 
 The monitor scans Robinhood Chain every 15 minutes using the configured strategy, stores SQLite state under `data/simulation.sqlite` by default, records skipped pair reasons, and updates simulated positions from newly stored snapshots.
 
+### Windows startup
+
+Windows can run the live monitor directly with Node and Task Scheduler. From a PowerShell prompt in the repository root:
+
+```powershell
+npm install
+.\scripts\register-windows-monitor.ps1
+```
+
+The setup registers `RobinhoodWalletAlerterMonitor` to start after boot and after login. It uses the current Windows user as the task principal with the S4U logon type so the boot trigger does not depend on an interactive login session. Run the script from an elevated PowerShell prompt if Windows requires admin rights to register that principal. By default it uses repo-local paths: `data\simulation.sqlite` for SQLite state, `data\` for runtime data, and `logs\monitor.log` for monitor output.
+
+Use Windows-friendly paths when the runtime files should live outside the checkout:
+
+```powershell
+.\scripts\register-windows-monitor.ps1 `
+  -DataDirectory "$env:LOCALAPPDATA\robinhood-wallet-alerter\data" `
+  -DatabasePath "$env:LOCALAPPDATA\robinhood-wallet-alerter\data\simulation.sqlite" `
+  -LogDirectory "$env:LOCALAPPDATA\robinhood-wallet-alerter\logs" `
+  -TaskUser "$env:USERDOMAIN\$env:USERNAME"
+```
+
+Verify the task without WSL or Docker:
+
+```powershell
+Get-ScheduledTask -TaskName RobinhoodWalletAlerterMonitor
+Start-ScheduledTask -TaskName RobinhoodWalletAlerterMonitor
+Get-Content .\logs\monitor.log -Tail 40
+```
+
 ## Robinhood Chain Assumptions
 
 - Chain ID: `4663`

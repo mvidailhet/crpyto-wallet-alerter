@@ -3,6 +3,8 @@ dist/
 coverage/
 data/**/*.sqlite
 data/**/*.sqlite-*
+logs/
+reports/
 !data/**/*.example
 !data/**/*.template
 .env
