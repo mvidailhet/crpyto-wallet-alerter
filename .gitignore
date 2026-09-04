@@ -1,6 +1,10 @@
 node_modules/
 dist/
 coverage/
+data/**/*.sqlite
+data/**/*.sqlite-*
+!data/**/*.example
+!data/**/*.template
 .env
 .DS_Store
 .agents/
