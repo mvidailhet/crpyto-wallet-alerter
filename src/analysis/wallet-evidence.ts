@@ -2,18 +2,12 @@ import { getAddress, type Address } from "viem";
 
 import type { DecodedV3Swap } from "../types/evm.js";
 import type { SaveWalletEvidenceInput, WalletChain } from "../storage/simulation-storage.js";
+import type { HistoricalReplayPair } from "./replay-snapshots.js";
 import { aggregateWalletSummaries } from "./summaries.js";
 import { inferTargetTokenTrade } from "./trades.js";
 
-export type HistoricalRunnerPair = {
-  tokenAddress: string;
-  pairAddress: string;
-  symbol?: string;
-  ranAt: Date;
-};
-
 export type DeriveHistoricalRunnerEvidenceOptions = {
-  pair: HistoricalRunnerPair;
+  pair: HistoricalReplayPair;
   swaps: DecodedV3Swap[];
   chain?: WalletChain;
   maxWallets?: number;
@@ -22,7 +16,8 @@ export type DeriveHistoricalRunnerEvidenceOptions = {
 /**
  * Turn reconstructed swap logs for a manually labelled runner pair into wallet
  * evidence events, so historical runner behavior can mark interesting wallets
- * without any live trading data.
+ * without any live trading data. Wallets are returned largest-buyer first;
+ * `maxWallets` keeps only the leading buyers.
  */
 export function deriveHistoricalRunnerEvidence({
   pair,
@@ -54,9 +49,6 @@ export function deriveHistoricalRunnerEvidence({
       symbol: pair.symbol,
       buyCount: summary.buyCount,
       totalTargetTokenBought: summary.totalTargetTokenBought.toString(),
-      firstBuyAt: summary.firstBuyTimestamp.toISOString(),
-      lastBuyAt: summary.lastBuyTimestamp.toISOString(),
-      ranAt: pair.ranAt.toISOString(),
     },
   }));
 }

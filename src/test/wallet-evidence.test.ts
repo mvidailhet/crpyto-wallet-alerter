@@ -68,9 +68,6 @@ describe("deriveHistoricalRunnerEvidence", () => {
           symbol: "RUN",
           buyCount: 2,
           totalTargetTokenBought: "400",
-          firstBuyAt: "2026-09-01T12:00:00.000Z",
-          lastBuyAt: "2026-09-01T13:00:00.000Z",
-          ranAt: "2026-09-05T00:00:00.000Z",
         },
       },
       {
@@ -86,9 +83,6 @@ describe("deriveHistoricalRunnerEvidence", () => {
           symbol: "RUN",
           buyCount: 1,
           totalTargetTokenBought: "50",
-          firstBuyAt: "2026-09-01T12:30:00.000Z",
-          lastBuyAt: "2026-09-01T12:30:00.000Z",
-          ranAt: "2026-09-05T00:00:00.000Z",
         },
       },
     ]);

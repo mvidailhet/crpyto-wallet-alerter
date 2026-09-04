@@ -277,64 +277,69 @@ function renderCsv(
         .join(","),
     ),
   ];
-  const interestingWalletLines = [
-    "",
-    "interestingWallets",
-    "wallet,chain,updatedAt,evidence",
-    ...state.interestingWallets.map((wallet) =>
-      [wallet.wallet, wallet.chain, formatEuropeParisDateTime(wallet.updatedAt), JSON.stringify(wallet.evidence)]
-        .map((value) => escapeCsvCell(formatCsvValue(value)))
-        .join(","),
-    ),
-  ];
-  const walletEvidenceLines = [
-    "",
-    "walletEvidence",
-    "wallet,chain,kind,observedAt,source,detail",
-    ...state.walletEvidence.map((event) =>
-      [
-        event.wallet,
-        event.chain,
-        event.kind,
-        formatEuropeParisDateTime(event.observedAt),
-        event.source,
-        JSON.stringify(event.detail),
-      ]
-        .map((value) => escapeCsvCell(formatCsvValue(value)))
-        .join(","),
-    ),
-  ];
-  const walletTagLines = [
-    "",
-    "walletTags",
-    "wallet,chain,tag,notes,updatedAt",
-    ...state.walletTags.map((tag) =>
-      [tag.wallet, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]
-        .map((value) => escapeCsvCell(formatCsvValue(value)))
-        .join(","),
-    ),
-  ];
-  const pairTagLines = [
-    "",
-    "pairTags",
-    "pair,chain,tag,notes,updatedAt",
-    ...state.pairTags.map((tag) =>
-      [tag.pair, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]
-        .map((value) => escapeCsvCell(formatCsvValue(value)))
-        .join(","),
-    ),
-  ];
   return `${[
     ...positionLines,
     ...scanGapLines,
     ...dataSourceFailureLines,
     ...skippedPairLines,
     ...replayAnalysisLines,
-    ...interestingWalletLines,
-    ...walletEvidenceLines,
-    ...walletTagLines,
-    ...pairTagLines,
+    ...buildWalletInsightCsvSections(state),
   ].join("\n")}\n`;
+}
+
+/**
+ * The interesting-wallet / wallet-evidence / manual-tag CSV blocks, shared by
+ * the full simulation report and the `replay-pairs wallets` command. Each block
+ * is preceded by a blank line, matching the other report sections.
+ */
+export function buildWalletInsightCsvSections(state: ResumeState): string[] {
+  const csvRow = (values: Array<string | number | Date | undefined>) =>
+    values.map((value) => escapeCsvCell(formatCsvValue(value))).join(",");
+
+  return [
+    "",
+    "interestingWallets",
+    "wallet,chain,updatedAt,evidence",
+    ...state.interestingWallets.map((wallet) =>
+      csvRow([
+        wallet.wallet,
+        wallet.chain,
+        formatEuropeParisDateTime(wallet.updatedAt),
+        JSON.stringify(wallet.evidence),
+      ]),
+    ),
+    "",
+    "walletEvidence",
+    "wallet,chain,kind,observedAt,source,detail",
+    ...state.walletEvidence.map((event) =>
+      csvRow([
+        event.wallet,
+        event.chain,
+        event.kind,
+        formatEuropeParisDateTime(event.observedAt),
+        event.source,
+        JSON.stringify(event.detail),
+      ]),
+    ),
+    "",
+    "walletTags",
+    "wallet,chain,tag,notes,updatedAt",
+    ...state.walletTags.map((tag) =>
+      csvRow([
+        tag.wallet,
+        tag.chain,
+        tag.tag,
+        tag.notes ?? "",
+        formatEuropeParisDateTime(tag.updatedAt),
+      ]),
+    ),
+    "",
+    "pairTags",
+    "pair,chain,tag,notes,updatedAt",
+    ...state.pairTags.map((tag) =>
+      csvRow([tag.pair, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]),
+    ),
+  ];
 }
 
 function renderHtml(

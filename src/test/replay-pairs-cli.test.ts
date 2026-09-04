@@ -478,6 +478,202 @@ describe("replay pairs command", () => {
     expect(output).toContain("Recorded 2 wallet evidence event(s) from 1 runner pair(s).");
   });
 
+  it("does not rewrite wallet evidence on an incremental reconstruct resume", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const csvPath = join(dataDirectory, "pairs.csv");
+    const output: string[] = [];
+
+    await writeFile(
+      csvPath,
+      [
+        "tokenAddress,pairAddress,symbol,label,notes,ranAt",
+        "0x0000000000000000000000000000000000000001,0x00000000000000000000000000000000000000aa,RUN,runner,,2026-09-01T12:00:00.000Z",
+      ].join("\n"),
+      "utf8",
+    );
+    await runReplayPairsCommand(["import", "--csv", csvPath], {
+      databasePath,
+      writeLine: (line) => output.push(line),
+    });
+
+    const reconstructArgs = (fromBlock: string, toBlock: string) => [
+      "reconstruct",
+      "--from-block",
+      fromBlock,
+      "--to-block",
+      toBlock,
+      "--resolution-minutes",
+      "15",
+      "--quote-token",
+      "0x0000000000000000000000000000000000000002",
+      "--quote-price-usd",
+      "2",
+    ];
+
+    await runReplayPairsCommand(reconstructArgs("10", "12"), {
+      databasePath,
+      writeLine: (line) => output.push(line),
+      fetchReplaySwaps: async () => [
+        replaySwap({
+          blockNumber: 10n,
+          amount0: -100n,
+          timestamp: "2026-09-01T12:01:00.000Z",
+          transactionFrom: "0x0000000000000000000000000000000000000011",
+        }),
+        replaySwap({
+          blockNumber: 11n,
+          amount0: -300n,
+          timestamp: "2026-09-01T12:20:00.000Z",
+          transactionFrom: "0x0000000000000000000000000000000000000011",
+        }),
+      ],
+    });
+
+    // Resume from block 13: a later window that only sees one more buy.
+    await runReplayPairsCommand(reconstructArgs("10", "20"), {
+      databasePath,
+      writeLine: (line) => output.push(line),
+      fetchReplaySwaps: async () => [
+        replaySwap({
+          blockNumber: 13n,
+          amount0: -1n,
+          timestamp: "2026-09-01T13:00:00.000Z",
+          transactionFrom: "0x0000000000000000000000000000000000000011",
+        }),
+      ],
+    });
+
+    const storage = initializeSimulationStorage({ databasePath });
+    try {
+      const [event, ...rest] = storage.getResumeState().walletEvidence;
+      expect(rest).toEqual([]);
+      expect(event.detail).toMatchObject({ buyCount: 2, totalTargetTokenBought: "400" });
+      expect(event.observedAt).toEqual(new Date("2026-09-01T12:01:00.000Z"));
+    } finally {
+      storage.close();
+    }
+
+    expect(output).toContain("Recorded 0 wallet evidence event(s) from 0 runner pair(s).");
+  });
+
+  it("suppresses wallet evidence for wallets and pairs tagged ignored", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const csvPath = join(dataDirectory, "pairs.csv");
+    const output: string[] = [];
+
+    await writeFile(
+      csvPath,
+      [
+        "tokenAddress,pairAddress,symbol,label,notes,ranAt",
+        "0x0000000000000000000000000000000000000001,0x00000000000000000000000000000000000000aa,RUN,runner,,2026-09-01T12:00:00.000Z",
+        "0x0000000000000000000000000000000000000009,0x00000000000000000000000000000000000000bb,ALSO,runner,,2026-09-01T12:00:00.000Z",
+      ].join("\n"),
+      "utf8",
+    );
+    await runReplayPairsCommand(["import", "--csv", csvPath], {
+      databasePath,
+      writeLine: (line) => output.push(line),
+    });
+    await runReplayPairsCommand(
+      ["tag-wallet", "--wallet", "0x0000000000000000000000000000000000000022", "--tag", "ignored"],
+      { databasePath, writeLine: (line) => output.push(line) },
+    );
+    await runReplayPairsCommand(
+      ["tag-pair", "--pair", "0x00000000000000000000000000000000000000bb", "--tag", "ignored"],
+      { databasePath, writeLine: (line) => output.push(line) },
+    );
+
+    await runReplayPairsCommand(
+      [
+        "reconstruct",
+        "--from-block",
+        "10",
+        "--to-block",
+        "12",
+        "--resolution-minutes",
+        "15",
+        "--quote-token",
+        "0x0000000000000000000000000000000000000002",
+        "--quote-price-usd",
+        "2",
+      ],
+      {
+        databasePath,
+        writeLine: (line) => output.push(line),
+        fetchReplaySwaps: async ({ pools }) => {
+          const buyer =
+            pools[0]?.pool === "0x00000000000000000000000000000000000000AA"
+              ? "0x0000000000000000000000000000000000000011"
+              : "0x0000000000000000000000000000000000000033";
+          return [
+            replaySwap({
+              blockNumber: 10n,
+              amount0: -100n,
+              pool: pools[0]?.pool,
+              timestamp: "2026-09-01T12:01:00.000Z",
+              transactionFrom: buyer,
+            }),
+            replaySwap({
+              blockNumber: 11n,
+              amount0: -100n,
+              pool: pools[0]?.pool,
+              timestamp: "2026-09-01T12:02:00.000Z",
+              transactionFrom: "0x0000000000000000000000000000000000000022",
+            }),
+          ];
+        },
+      },
+    );
+
+    const storage = initializeSimulationStorage({ databasePath });
+    try {
+      const state = storage.getResumeState();
+      expect(state.walletEvidence.map((event) => event.wallet)).toEqual([
+        "0x0000000000000000000000000000000000000011",
+      ]);
+      expect(state.interestingWallets.map((wallet) => wallet.wallet)).toEqual([
+        "0x0000000000000000000000000000000000000011",
+      ]);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("promotes wallets tagged interesting and drops wallets tagged ignored", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const wallet = "0x0000000000000000000000000000000000000044";
+    const output: string[] = [];
+
+    await runReplayPairsCommand(
+      ["tag-wallet", "--wallet", wallet, "--tag", "interesting", "--notes", "manual add"],
+      { databasePath, writeLine: (line) => output.push(line) },
+    );
+
+    let storage = initializeSimulationStorage({ databasePath });
+    try {
+      expect(storage.getResumeState().interestingWallets.map((entry) => entry.wallet)).toEqual([
+        wallet,
+      ]);
+    } finally {
+      storage.close();
+    }
+
+    await runReplayPairsCommand(["tag-wallet", "--wallet", wallet, "--tag", "ignored"], {
+      databasePath,
+      writeLine: (line) => output.push(line),
+    });
+
+    storage = initializeSimulationStorage({ databasePath });
+    try {
+      expect(storage.getResumeState().interestingWallets).toEqual([]);
+    } finally {
+      storage.close();
+    }
+  });
+
   it("adds manual wallet and pair tags and lists interesting wallet evidence", async () => {
     const dataDirectory = await createTempDir();
     const databasePath = join(dataDirectory, "simulation.sqlite");
