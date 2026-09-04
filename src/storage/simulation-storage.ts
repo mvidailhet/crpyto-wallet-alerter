@@ -74,6 +74,11 @@ export type SimulateTradeSetupsResult = {
   positionsClosed: number;
 };
 
+export type SimulateTradeSetupsOptions = {
+  pairs?: Set<string>;
+  snapshotSource?: string;
+};
+
 export type ScanGapRecord = {
   id: string;
   scanner: string;
@@ -130,6 +135,7 @@ export type ResumeState = {
   dataSourceFailures: DataSourceFailureRecord[];
   marketSnapshots: MarketSnapshotRecord[];
   interestingWallets: InterestingWalletRecord[];
+  manualReplayPairs: ManualReplayPairRecord[];
   tradeSetups: TradeSetupRecord[];
   simulatedPositions: SimulatedPositionRecord[];
   scanGaps: ScanGapRecord[];
@@ -552,7 +558,10 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
         .map((row) => toManualReplayPairRecord(row as ManualReplayPairRow));
     },
 
-    simulateTradeSetups(strategy: StrategyConfig): SimulateTradeSetupsResult {
+    simulateTradeSetups(
+      strategy: StrategyConfig,
+      options: SimulateTradeSetupsOptions = {},
+    ): SimulateTradeSetupsResult {
       const result: SimulateTradeSetupsResult = {
         tradeSetupsCreated: 0,
         tradeSetupsUpdated: 0,
@@ -562,7 +571,8 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
       const snapshots = database
         .prepare("SELECT * FROM market_snapshots ORDER BY pair, captured_at")
         .all()
-        .map((row) => toMarketSnapshotRecord(row as MarketSnapshotRow));
+        .map((row) => toMarketSnapshotRecord(row as MarketSnapshotRow))
+        .filter((snapshot) => matchesSimulationOptions(snapshot, options));
       const existingTradeSetupIds = new Set(
         database
           .prepare("SELECT id FROM trade_setups WHERE strategy_version_id = @strategyVersionId")
@@ -703,6 +713,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .prepare("SELECT * FROM interesting_wallets ORDER BY updated_at, wallet")
           .all()
           .map((row) => toInterestingWalletRecord(row as InterestingWalletRow)),
+        manualReplayPairs: this.listManualReplayPairs(),
         tradeSetups: database
           .prepare("SELECT * FROM trade_setups ORDER BY created_at, id")
           .all()
@@ -736,6 +747,19 @@ function groupSnapshotsByPair(snapshots: MarketSnapshotRecord[]) {
     grouped.set(snapshot.pair, pairSnapshots);
   }
   return grouped;
+}
+
+function matchesSimulationOptions(
+  snapshot: MarketSnapshotRecord,
+  options: SimulateTradeSetupsOptions,
+) {
+  if (options.pairs && !options.pairs.has(snapshot.pair)) {
+    return false;
+  }
+  if (options.snapshotSource && snapshot.metrics.source !== options.snapshotSource) {
+    return false;
+  }
+  return true;
 }
 
 function selectTradeSetupCandidates(

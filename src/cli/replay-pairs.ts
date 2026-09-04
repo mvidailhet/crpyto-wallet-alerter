@@ -3,16 +3,19 @@ import { readFile } from "node:fs/promises";
 
 import { getAddress } from "viem";
 
+import { buildReplayAnalysisRows, summarizeReplayOutcomes } from "../analysis/replay-results.js";
 import { reconstructReplaySnapshots } from "../analysis/replay-snapshots.js";
 import { loadConfig } from "../config/env.js";
 import { fetchV3Swaps } from "../dex/v3/swaps.js";
 import { generateSimulationReports } from "../reports/simulation-reports.js";
 import { chunkBlockRange } from "../rpc/blocks.js";
+import { loadStrategyConfig } from "../strategies/configs.js";
 import {
   initializeSimulationStorage,
   type ManualReplayPairImport,
   type ManualReplayPairLabel,
   type ManualReplayPairRecord,
+  type ResumeState,
 } from "../storage/simulation-storage.js";
 import type { DecodedV3Swap, DiscoveredPool } from "../types/evm.js";
 
@@ -20,6 +23,7 @@ type ReplayPairsCommandOptions = {
   databasePath?: string;
   dataDirectory?: string;
   reportsDirectory?: string;
+  configDirectory?: string;
   generatedAt?: Date;
   writeLine?: (line: string) => void;
   fetchReplaySwaps?: (args: {
@@ -90,6 +94,51 @@ export async function runReplayPairsCommand(
         reportsDirectory: options.reportsDirectory,
         generatedAt: options.generatedAt,
       });
+      writeLine(`Wrote simulation reports: ${report.htmlPath} and ${report.csvPath}.`);
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
+  if (command === "run") {
+    const strategyVersions = readRepeatedFlag(args, "--strategy");
+    if (strategyVersions.length === 0) {
+      throw new Error("Usage: npm run replay-pairs -- run --strategy baseline-96h");
+    }
+
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      const replayPairAddresses = new Set(
+        storage
+          .listManualReplayPairs()
+          .flatMap((pair) => (pair.pairAddress ? [pair.pairAddress] : [])),
+      );
+      for (const version of strategyVersions) {
+        const strategy = await loadStrategyConfig(version, {
+          configDirectory: options.configDirectory,
+        });
+        storage.simulateTradeSetups(strategy, {
+          pairs: replayPairAddresses,
+          snapshotSource: "historical-replay",
+        });
+      }
+
+      const replayResults = toHistoricalReplayState(storage.getResumeState(), strategyVersions);
+      const replayRows = buildReplayAnalysisRows(replayResults, strategyVersions);
+      const summary = summarizeReplayOutcomes(replayRows);
+      const report = await generateSimulationReports(replayResults, {
+        reportsDirectory: options.reportsDirectory,
+        generatedAt: options.generatedAt,
+        replayStrategyVersionIds: strategyVersions,
+      });
+      writeLine(
+        `Ran ${strategyVersions.length} strategy version(s): ${summary.triggered} triggered, ${summary.filled} filled, ${summary.stopLosses} stop-loss, ${summary.takeProfitHits} take-profit hit, ${summary.moonbags} moonbag, ${summary.missed} missed.`,
+      );
       writeLine(`Wrote simulation reports: ${report.htmlPath} and ${report.csvPath}.`);
     } finally {
       storage.close();
@@ -213,7 +262,7 @@ export async function runReplayPairsCommand(
   }
 
   throw new Error(
-    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct>",
+    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct | run --strategy baseline-96h>",
   );
 }
 
@@ -379,9 +428,47 @@ function readFlag(args: string[], flag: string) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+function readRepeatedFlag(args: string[], flag: string) {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === flag) {
+      const value = args[index + 1];
+      if (value) {
+        values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
 function readBigIntFlag(args: string[], flag: string) {
   const value = readFlag(args, flag);
   return value === undefined ? undefined : BigInt(value);
+}
+
+function toHistoricalReplayState(state: ResumeState, strategyVersionIds: string[]): ResumeState {
+  const replayPairAddresses = new Set(
+    state.manualReplayPairs.flatMap((pair) => (pair.pairAddress ? [pair.pairAddress] : [])),
+  );
+  const marketSnapshots = state.marketSnapshots.filter(
+    (snapshot) =>
+      replayPairAddresses.has(snapshot.pair) && snapshot.metrics.source === "historical-replay",
+  );
+  const replaySnapshotPairs = new Set(marketSnapshots.map((snapshot) => snapshot.pair));
+  const tradeSetups = state.tradeSetups.filter((setup) => replaySnapshotPairs.has(setup.pair));
+  const tradeSetupIds = new Set(tradeSetups.map((setup) => setup.id));
+
+  return {
+    ...state,
+    marketSnapshots,
+    strategyVersions: state.strategyVersions.filter((strategy) =>
+      strategyVersionIds.includes(strategy.id),
+    ),
+    tradeSetups,
+    simulatedPositions: state.simulatedPositions.filter((position) =>
+      tradeSetupIds.has(position.tradeSetupId),
+    ),
+  };
 }
 
 function readIntegerFlag(args: string[], flag: string) {

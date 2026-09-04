@@ -1,11 +1,13 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { getAddress } from "viem";
 
 import { runReplayPairsCommand } from "../cli/replay-pairs.js";
 import { initializeSimulationStorage } from "../storage/simulation-storage.js";
+import type { MarketSnapshotRecord } from "../storage/simulation-storage.js";
 import type { DecodedV3Swap } from "../types/evm.js";
 
 const tempDirs: string[] = [];
@@ -152,6 +154,116 @@ describe("replay pairs command", () => {
     ]);
   });
 
+  it("runs named strategy versions against reconstructed snapshots and reports labeled outcomes", async () => {
+    const dataDirectory = await createTempDir();
+    const reportsDirectory = join(dataDirectory, "reports");
+    const configDirectory = join(dataDirectory, "strategies");
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const csvPath = join(dataDirectory, "pairs.csv");
+    const output: string[] = [];
+    const strategyConfig = {
+      version: "test-replay",
+      chain: "robinhood",
+      scanIntervalMinutes: 15,
+      topPairsByOneHourVolume: 50,
+      minimumPairAgeHours: 96,
+      minimumLiquidityUsd: 250_000,
+      minimumOneHourVolumeUsd: 100_000,
+      athMarketCapUsd: { minimum: 7_000_000, maximum: 25_000_000 },
+      currentMarketCapWithinAthPercent: 30,
+      athAgeHours: { minimum: 12, maximum: 168 },
+      plannedBuyLevels: [{ athPullbackPercent: 35, allocationPercent: 100 }],
+      maximumActiveTradeSetups: 10,
+    };
+
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(
+      join(configDirectory, "test-replay.json"),
+      JSON.stringify(strategyConfig),
+      "utf8",
+    );
+    await writeFile(
+      csvPath,
+      [
+        "tokenAddress,pairAddress,symbol,label,notes,ranAt",
+        "0x0000000000000000000000000000000000000001,0x00000000000000000000000000000000000000aa,STOP,runner,,2026-09-01T12:00:00.000Z",
+        "0x0000000000000000000000000000000000000002,0x00000000000000000000000000000000000000bb,MOON,runner,,2026-09-01T12:00:00.000Z",
+        "0x0000000000000000000000000000000000000003,0x00000000000000000000000000000000000000cc,MISS,failed,,2026-09-01T12:00:00.000Z",
+        "0x0000000000000000000000000000000000000004,,NOPAIR,runner,,2026-09-01T12:00:00.000Z",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await runReplayPairsCommand(["import", "--csv", csvPath], {
+      databasePath,
+      writeLine: (line) => output.push(line),
+    });
+    const storage = initializeSimulationStorage({ databasePath });
+    try {
+      saveReplayMarket(storage, "0x00000000000000000000000000000000000000aa", [
+        { at: "2026-09-01T12:00:00.000Z", marketCapUsd: 16_000_000 },
+        { at: "2026-09-01T13:00:00.000Z", marketCapUsd: 13_000_000 },
+        {
+          at: "2026-09-01T14:00:00.000Z",
+          lowMarketCapUsd: 8_000_000,
+          highMarketCapUsd: 14_000_000,
+        },
+      ]);
+      saveReplayMarket(storage, "0x00000000000000000000000000000000000000bb", [
+        { at: "2026-09-01T12:00:00.000Z", marketCapUsd: 16_000_000 },
+        { at: "2026-09-01T13:00:00.000Z", marketCapUsd: 13_000_000 },
+        {
+          at: "2026-09-01T14:00:00.000Z",
+          lowMarketCapUsd: 12_000_000,
+          highMarketCapUsd: 27_000_000,
+        },
+      ]);
+      saveReplayMarket(storage, "0x00000000000000000000000000000000000000cc", [
+        { at: "2026-09-01T12:00:00.000Z", marketCapUsd: 5_000_000 },
+      ]);
+      saveReplayMarket(
+        storage,
+        "0x00000000000000000000000000000000000000dd",
+        [{ at: "2026-09-01T12:00:00.000Z", marketCapUsd: 16_000_000 }],
+        "live-monitor",
+      );
+    } finally {
+      storage.close();
+    }
+
+    await runReplayPairsCommand(["run", "--strategy", "test-replay"], {
+      databasePath,
+      reportsDirectory,
+      configDirectory,
+      generatedAt: new Date("2026-09-01T15:00:00.000Z"),
+      writeLine: (line) => output.push(line),
+    });
+
+    expect(output).toContain(
+      "Ran 1 strategy version(s): 2 triggered, 2 filled, 1 stop-loss, 1 take-profit hit, 1 moonbag, 2 missed.",
+    );
+    expect(await readdir(reportsDirectory)).toEqual([
+      "simulation-20260901-170000.csv",
+      "simulation-20260901-170000.html",
+    ]);
+    const csv = await readFile(join(reportsDirectory, "simulation-20260901-170000.csv"), "utf8");
+    expect(csv).toContain("replayAnalysis");
+    expect(csv).toContain("strategyVersionId,pair,symbol,label,outcome");
+    expect(csv).toContain(
+      "test-replay,0x00000000000000000000000000000000000000AA,STOP,runner,stop-loss",
+    );
+    expect(csv).toContain(
+      "test-replay,0x00000000000000000000000000000000000000bb,MOON,runner,moonbag",
+    );
+    expect(csv).toContain(
+      "test-replay,0x00000000000000000000000000000000000000cc,MISS,failed,missed",
+    );
+    expect(csv).toContain(
+      "test-replay,0x0000000000000000000000000000000000000004,NOPAIR,runner,missed",
+    );
+    expect(csv).not.toContain("0x00000000000000000000000000000000000000dd");
+  });
+
   it("reconstructs imported pair snapshots and resumes from stored replay progress", async () => {
     const dataDirectory = await createTempDir();
     const databasePath = join(dataDirectory, "simulation.sqlite");
@@ -296,4 +408,34 @@ function replaySwap(overrides: SwapOverrides): DecodedV3Swap {
     transactionFrom: "0x00000000000000000000000000000000000000b0",
     ...rest,
   };
+}
+
+function saveReplayMarket(
+  storage: ReturnType<typeof initializeSimulationStorage>,
+  pair: string,
+  snapshots: Array<
+    { at: string } & Partial<
+      Pick<MarketSnapshotRecord["metrics"], "marketCapUsd" | "lowMarketCapUsd" | "highMarketCapUsd">
+    >
+  >,
+  source = "historical-replay",
+) {
+  snapshots.forEach((snapshot, index) => {
+    storage.saveMarketSnapshot({
+      pair: getAddress(pair),
+      capturedAt: new Date(snapshot.at),
+      blockNumber: BigInt(index + 1),
+      metrics: {
+        source,
+        marketCapUsd: snapshot.marketCapUsd,
+        lowMarketCapUsd: snapshot.lowMarketCapUsd,
+        highMarketCapUsd: snapshot.highMarketCapUsd,
+        athMarketCapUsd: 20_000_000,
+        athCapturedAt: "2026-08-31T12:00:00.000Z",
+        pairAgeHours: 120,
+        liquidityUsd: 300_000,
+        oneHourVolumeUsd: 150_000,
+      },
+    });
+  });
 }

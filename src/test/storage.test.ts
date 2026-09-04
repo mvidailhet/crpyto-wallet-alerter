@@ -524,6 +524,7 @@ describe("simulation storage initialization", () => {
             evidence: { profitableSetups: 2 },
           },
         ],
+        manualReplayPairs: [],
         tradeSetups: [
           {
             id: "setup-1",
