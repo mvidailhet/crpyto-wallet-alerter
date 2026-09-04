@@ -1,24 +1,51 @@
 #!/usr/bin/env node
-import { loadConfig } from "../config/env.js";
+import { resolveAlertAdapters } from "../alerts/telegram-adapter.js";
+import { loadConfig, type AppConfig } from "../config/env.js";
 import { startDexScreenerMonitor } from "../monitor/dex-screener-monitor.js";
-import { loadStrategyConfig } from "../strategies/configs.js";
+import { loadStrategyConfig, type StrategyConfig } from "../strategies/configs.js";
 
-export async function runMonitorCommand() {
-  const config = loadConfig();
-  const strategy = await loadStrategyConfig(config.strategyVersion);
-  const monitor = startDexScreenerMonitor({
+export type RunMonitorCommandOptions = {
+  args?: string[];
+  config?: AppConfig;
+  strategy?: StrategyConfig;
+  start?: typeof startDexScreenerMonitor;
+  writeLine?: (line: string) => void;
+  registerShutdown?: boolean;
+};
+
+export async function runMonitorCommand(options: RunMonitorCommandOptions = {}) {
+  const args = options.args ?? process.argv.slice(2);
+  const requireAlerts = args.includes("--require-alerts");
+  const config = options.config ?? loadConfig();
+  const strategy = options.strategy ?? (await loadStrategyConfig(config.strategyVersion));
+  const writeLine = options.writeLine ?? console.log;
+  const start = options.start ?? startDexScreenerMonitor;
+
+  const alertAdapters = resolveAlertAdapters(config, { requireAlerts });
+  writeLine(
+    alertAdapters.length === 0
+      ? "Telegram alerts disabled (no credentials configured)."
+      : `Alerts enabled: ${alertAdapters.map((adapter) => adapter.channel).join(", ")}.`,
+  );
+
+  const monitor = start({
     databasePath: config.simulationDatabasePath,
     dataDirectory: config.simulationDataDirectory,
     strategy,
-    writeLine: console.log,
+    alertAdapters,
+    writeLine,
   });
 
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.once(signal, () => {
-      monitor.stop();
-      process.exitCode = 0;
-    });
+  if (options.registerShutdown ?? true) {
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      process.once(signal, () => {
+        monitor.stop();
+        process.exitCode = 0;
+      });
+    }
   }
+
+  return monitor;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

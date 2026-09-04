@@ -59,6 +59,23 @@ npm run monitor
 
 The monitor scans Robinhood Chain every 15 minutes using the configured strategy, stores SQLite state under `data/simulation.sqlite` by default, records skipped pair reasons, and updates simulated positions from newly stored snapshots.
 
+### Telegram alerts
+
+Telegram alerts are optional. Set both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` to enable them; leaving them unset disables only the Telegram adapter and the monitor keeps scanning.
+
+```ini
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_CHAT_ID=-1001234567890
+```
+
+When enabled, the monitor sends one Telegram message for each new trade setup, simulated fill, stop loss, 2x take profit, repeated data-source failure (after three consecutive failed scans, at most once per hour), and a daily summary for the previous Europe/Paris day. Sent alerts are recorded in the `alert_history` table, so repeated scans and restarts never resend the same alert.
+
+Pass `--require-alerts` to make the monitor fail fast when no alert adapter is configured:
+
+```bash
+npm run monitor -- --require-alerts
+```
+
 ### Windows startup
 
 Windows can run the live monitor directly with Node and Task Scheduler. From a PowerShell prompt in the repository root:

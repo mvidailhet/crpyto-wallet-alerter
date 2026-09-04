@@ -1,3 +1,5 @@
+import { dispatchMonitorAlerts } from "../alerts/monitor-alerts.js";
+import type { AlertAdapter } from "../alerts/telegram-adapter.js";
 import { initializeSimulationStorage } from "../storage/simulation-storage.js";
 import type { SimulateTradeSetupsResult } from "../storage/simulation-storage.js";
 import type { StrategyConfig } from "../strategies/configs.js";
@@ -33,6 +35,7 @@ export type DexScreenerMonitorScanResult = {
   dataSourceFailuresRecorded: number;
   backoffActive: boolean;
   simulation: SimulateTradeSetupsResult;
+  alertsSent: number;
 };
 
 export type SkippedPairReason = "too-young" | "low-liquidity" | "low-volume" | "missing-market-cap";
@@ -46,12 +49,13 @@ export type RunDexScreenerMonitorOnceOptions = {
   blockNumber?: bigint;
   scannerName?: string;
   adapterName?: string;
+  alertAdapters?: AlertAdapter[];
+  writeLine?: (line: string) => void;
 };
 
 export type StartDexScreenerMonitorOptions = RunDexScreenerMonitorOnceOptions & {
   runOnce?: () => Promise<void>;
   stop?: () => void;
-  writeLine?: (line: string) => void;
 };
 
 const robinhoodChainId = "robinhood";
@@ -83,13 +87,13 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
         lastScannedBlock: blockNumber,
         status: `backoff:${adapter}`,
       });
-      return {
+      return await finalizeScan(storage, options, capturedAt, {
         snapshotsStored: 0,
         skippedPairs: 0,
         dataSourceFailuresRecorded: 0,
         backoffActive: true,
         simulation,
-      };
+      });
     }
 
     let pairs: DexScreenerPair[];
@@ -124,13 +128,13 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
         lastScannedBlock: blockNumber,
         status: `failed:${adapter}`,
       });
-      return {
+      return await finalizeScan(storage, options, capturedAt, {
         snapshotsStored: 0,
         skippedPairs: 0,
         dataSourceFailuresRecorded: 1,
         backoffActive: true,
         simulation,
-      };
+      });
     }
 
     storage.saveDataSourceRecovery(adapter, capturedAt);
@@ -168,16 +172,31 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
       status: "ok",
     });
 
-    return {
+    return await finalizeScan(storage, options, capturedAt, {
       snapshotsStored: pairs.length,
       skippedPairs,
       dataSourceFailuresRecorded: 0,
       backoffActive: false,
       simulation,
-    };
+    });
   } finally {
     storage.close();
   }
+}
+
+async function finalizeScan(
+  storage: ReturnType<typeof initializeSimulationStorage>,
+  options: RunDexScreenerMonitorOnceOptions,
+  capturedAt: Date,
+  result: Omit<DexScreenerMonitorScanResult, "alertsSent">,
+): Promise<DexScreenerMonitorScanResult> {
+  const alertsSent = await dispatchMonitorAlerts({
+    storage,
+    adapters: options.alertAdapters ?? [],
+    now: capturedAt,
+    writeLine: options.writeLine,
+  });
+  return { ...result, alertsSent };
 }
 
 export function startDexScreenerMonitor(options: StartDexScreenerMonitorOptions) {
@@ -189,7 +208,7 @@ export function startDexScreenerMonitor(options: StartDexScreenerMonitorOptions)
     (async () => {
       const result = await runDexScreenerMonitorOnce(options);
       options.writeLine?.(
-        `Stored ${result.snapshotsStored} snapshot(s), skipped ${result.skippedPairs} pair(s), recorded ${result.dataSourceFailuresRecorded} data-source failure(s), created ${result.simulation.tradeSetupsCreated} trade setup(s), opened ${result.simulation.positionsOpened} simulated position(s).`,
+        `Stored ${result.snapshotsStored} snapshot(s), skipped ${result.skippedPairs} pair(s), recorded ${result.dataSourceFailuresRecorded} data-source failure(s), created ${result.simulation.tradeSetupsCreated} trade setup(s), opened ${result.simulation.positionsOpened} simulated position(s), sent ${result.alertsSent} alert(s).`,
       );
     });
 

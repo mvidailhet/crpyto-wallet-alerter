@@ -75,3 +75,11 @@ _Avoid_: Outage
 **Adapter**:
 A source-specific integration that fetches or reconstructs market, wallet, or alert data for the project.
 _Avoid_: Provider, API client
+
+**Alert**:
+A single outbound notification about a monitor event worth a human's attention: a new trade setup, a simulated fill, a stop loss, a take profit, a repeated data-source failure, or a daily summary.
+_Avoid_: Signal, notification spam
+
+**Sent Alert History**:
+The persisted record of alerts already delivered, keyed so repeated scans and restarts never resend the same alert.
+_Avoid_: Alert log, dedupe cache

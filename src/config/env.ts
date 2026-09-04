@@ -2,6 +2,11 @@ import "dotenv/config";
 
 import { robinhoodChain } from "../chains/robinhood.js";
 
+export type TelegramConfig = {
+  botToken: string;
+  chatId: string;
+};
+
 export type AppConfig = {
   rpcUrl: string;
   logChunkSize: bigint;
@@ -9,6 +14,7 @@ export type AppConfig = {
   simulationDatabasePath?: string;
   simulationDataDirectory?: string;
   strategyVersion: string;
+  telegram?: TelegramConfig;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -18,6 +24,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const simulationDatabasePath = env.SIMULATION_DATABASE_PATH;
   const simulationDataDirectory = env.SIMULATION_DATA_DIR;
   const strategyVersion = env.STRATEGY_VERSION ?? "baseline-96h";
+  const telegram = loadTelegramConfig(env);
 
   if (logChunkSize <= 0n) {
     throw new Error("LOG_CHUNK_SIZE must be a positive integer");
@@ -34,5 +41,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     simulationDatabasePath,
     simulationDataDirectory,
     strategyVersion,
+    telegram,
   };
+}
+
+function loadTelegramConfig(env: NodeJS.ProcessEnv): TelegramConfig | undefined {
+  const botToken = env.TELEGRAM_BOT_TOKEN?.trim();
+  const chatId = env.TELEGRAM_CHAT_ID?.trim();
+
+  if (!botToken && !chatId) {
+    return undefined;
+  }
+  if (!botToken || !chatId) {
+    throw new Error("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set together");
+  }
+
+  return { botToken, chatId };
 }
