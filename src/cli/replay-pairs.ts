@@ -5,6 +5,7 @@ import { getAddress } from "viem";
 
 import { buildReplayAnalysisRows, summarizeReplayOutcomes } from "../analysis/replay-results.js";
 import { reconstructReplaySnapshots } from "../analysis/replay-snapshots.js";
+import { deriveHistoricalRunnerEvidence } from "../analysis/wallet-evidence.js";
 import { loadConfig } from "../config/env.js";
 import { fetchV3Swaps } from "../dex/v3/swaps.js";
 import { generateSimulationReports } from "../reports/simulation-reports.js";
@@ -15,6 +16,7 @@ import {
   type ManualReplayPairImport,
   type ManualReplayPairLabel,
   type ManualReplayPairRecord,
+  type ManualTag,
   type ResumeState,
 } from "../storage/simulation-storage.js";
 import type { DecodedV3Swap, DiscoveredPool } from "../types/evm.js";
@@ -174,6 +176,8 @@ export async function runReplayPairsCommand(
     try {
       let snapshotsStored = 0;
       let skippedPairs = 0;
+      let walletEvidenceEvents = 0;
+      let runnerPairsProcessed = 0;
 
       for (const replayPair of storage.listManualReplayPairs()) {
         if (!replayPair.pairAddress) {
@@ -206,6 +210,7 @@ export async function runReplayPairsCommand(
           },
         ];
         let lowConfidenceSnapshots = 0;
+        const pairSwaps: DecodedV3Swap[] = [];
         for (const chunk of chunkBlockRange(replayFromBlock, toBlock, chunkSize)) {
           const swaps = await fetchReplaySwaps(options, {
             pools,
@@ -213,6 +218,7 @@ export async function runReplayPairsCommand(
             toBlock: chunk.toBlock,
             chunkSize,
           });
+          pairSwaps.push(...swaps);
           const snapshots = reconstructReplaySnapshots({
             pair: {
               tokenAddress: replayPair.tokenAddress,
@@ -250,10 +256,36 @@ export async function runReplayPairsCommand(
             details: { lowConfidenceSnapshots },
           });
         }
+
+        if (replayPair.label === "runner") {
+          runnerPairsProcessed += 1;
+          const evidence = deriveHistoricalRunnerEvidence({
+            pair: {
+              tokenAddress: replayPair.tokenAddress,
+              pairAddress,
+              symbol: replayPair.symbol,
+              ranAt: replayPair.ranAt,
+            },
+            swaps: pairSwaps,
+          });
+          for (const event of evidence) {
+            storage.saveWalletEvidence(event);
+            storage.saveInterestingWallet({
+              wallet: event.wallet,
+              chain: event.chain,
+              updatedAt: replayPair.ranAt,
+              evidence: { kind: event.kind, source: event.source, ...event.detail },
+            });
+            walletEvidenceEvents += 1;
+          }
+        }
       }
 
       writeLine(
         `Reconstructed ${snapshotsStored} historical replay snapshot(s), skipped ${skippedPairs} manual replay pair(s).`,
+      );
+      writeLine(
+        `Recorded ${walletEvidenceEvents} wallet evidence event(s) from ${runnerPairsProcessed} runner pair(s).`,
       );
     } finally {
       storage.close();
@@ -261,9 +293,114 @@ export async function runReplayPairsCommand(
     return;
   }
 
+  if (command === "tag-wallet" || command === "tag-pair") {
+    const isWallet = command === "tag-wallet";
+    const target = readFlag(args, isWallet ? "--wallet" : "--pair");
+    const tag = readFlag(args, "--tag");
+    const notes = readFlag(args, "--notes");
+    if (!target || !isManualTag(tag)) {
+      throw new Error(
+        `Usage: npm run replay-pairs -- ${command} --${isWallet ? "wallet" : "pair"} 0x... --tag <interesting|ignored> [--notes "reason"]`,
+      );
+    }
+
+    const address = getAddress(target);
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      if (isWallet) {
+        storage.saveWalletTag({ wallet: address, tag, notes, updatedAt: new Date() });
+      } else {
+        storage.savePairTag({ pair: address, tag, notes, updatedAt: new Date() });
+      }
+      writeLine(`Tagged ${isWallet ? "wallet" : "pair"} ${address} as ${tag}.`);
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
+  if (command === "wallets") {
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      const state = storage.getResumeState();
+      for (const line of renderWalletEvidenceLines(state)) {
+        writeLine(line);
+      }
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
   throw new Error(
-    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct | run --strategy baseline-96h>",
+    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct | run --strategy baseline-96h | wallets | tag-wallet --wallet 0x... --tag interesting | tag-pair --pair 0x... --tag ignored>",
   );
+}
+
+function isManualTag(value: string | undefined): value is ManualTag {
+  return value === "interesting" || value === "ignored";
+}
+
+function renderWalletEvidenceLines(state: ResumeState): string[] {
+  const lines: string[] = [];
+
+  lines.push("interestingWallets", "wallet,chain,updatedAt,evidence");
+  for (const wallet of state.interestingWallets) {
+    lines.push(
+      [
+        wallet.wallet,
+        wallet.chain,
+        formatEuropeParisDateTime(wallet.updatedAt),
+        JSON.stringify(wallet.evidence),
+      ]
+        .map(escapeCsvCell)
+        .join(","),
+    );
+  }
+
+  lines.push("", "walletEvidence", "wallet,chain,kind,observedAt,source,detail");
+  for (const event of state.walletEvidence) {
+    lines.push(
+      [
+        event.wallet,
+        event.chain,
+        event.kind,
+        formatEuropeParisDateTime(event.observedAt),
+        event.source,
+        JSON.stringify(event.detail),
+      ]
+        .map(escapeCsvCell)
+        .join(","),
+    );
+  }
+
+  lines.push("", "walletTags", "wallet,chain,tag,notes,updatedAt");
+  for (const tag of state.walletTags) {
+    lines.push(
+      [tag.wallet, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]
+        .map(escapeCsvCell)
+        .join(","),
+    );
+  }
+
+  lines.push("", "pairTags", "pair,chain,tag,notes,updatedAt");
+  for (const tag of state.pairTags) {
+    lines.push(
+      [tag.pair, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]
+        .map(escapeCsvCell)
+        .join(","),
+    );
+  }
+
+  return lines;
 }
 
 export function parseManualReplayPairsCsv(csv: string): ManualReplayPairImport[] {

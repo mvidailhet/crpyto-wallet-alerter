@@ -277,12 +277,63 @@ function renderCsv(
         .join(","),
     ),
   ];
+  const interestingWalletLines = [
+    "",
+    "interestingWallets",
+    "wallet,chain,updatedAt,evidence",
+    ...state.interestingWallets.map((wallet) =>
+      [wallet.wallet, wallet.chain, formatEuropeParisDateTime(wallet.updatedAt), JSON.stringify(wallet.evidence)]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
+  const walletEvidenceLines = [
+    "",
+    "walletEvidence",
+    "wallet,chain,kind,observedAt,source,detail",
+    ...state.walletEvidence.map((event) =>
+      [
+        event.wallet,
+        event.chain,
+        event.kind,
+        formatEuropeParisDateTime(event.observedAt),
+        event.source,
+        JSON.stringify(event.detail),
+      ]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
+  const walletTagLines = [
+    "",
+    "walletTags",
+    "wallet,chain,tag,notes,updatedAt",
+    ...state.walletTags.map((tag) =>
+      [tag.wallet, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
+  const pairTagLines = [
+    "",
+    "pairTags",
+    "pair,chain,tag,notes,updatedAt",
+    ...state.pairTags.map((tag) =>
+      [tag.pair, tag.chain, tag.tag, tag.notes ?? "", formatEuropeParisDateTime(tag.updatedAt)]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
   return `${[
     ...positionLines,
     ...scanGapLines,
     ...dataSourceFailureLines,
     ...skippedPairLines,
     ...replayAnalysisLines,
+    ...interestingWalletLines,
+    ...walletEvidenceLines,
+    ...walletTagLines,
+    ...pairTagLines,
   ].join("\n")}\n`;
 }
 
@@ -325,12 +376,55 @@ function renderHtml(
   ${renderDataSourceFailureTable(state)}
   ${renderSkippedPairsTable(skippedByReason)}
   ${renderSkippedPairDetailsTable(state)}
+  ${renderInterestingWalletTables(state)}
   ${renderReplayAnalysisTable(replayRows)}
   ${renderCharts(state, markers)}
   ${renderChartMarkerTable(markers)}
 </body>
 </html>
 `;
+}
+
+function renderInterestingWalletTables(state: ResumeState) {
+  return `<h2>Interesting wallets</h2>
+  <table>
+    <thead><tr><th>Wallet</th><th>Chain</th><th>Updated</th><th>Evidence</th></tr></thead>
+    <tbody>${state.interestingWallets
+      .map(
+        (wallet) =>
+          `<tr><td>${escapeHtml(wallet.wallet)}</td><td>${escapeHtml(wallet.chain)}</td><td>${escapeHtml(formatEuropeParisDateTime(wallet.updatedAt))}</td><td>${escapeHtml(JSON.stringify(wallet.evidence))}</td></tr>`,
+      )
+      .join("")}</tbody>
+  </table>
+  <h2>Wallet evidence</h2>
+  <table>
+    <thead><tr><th>Wallet</th><th>Chain</th><th>Kind</th><th>Observed</th><th>Source</th><th>Detail</th></tr></thead>
+    <tbody>${state.walletEvidence
+      .map(
+        (event) =>
+          `<tr><td>${escapeHtml(event.wallet)}</td><td>${escapeHtml(event.chain)}</td><td>${escapeHtml(event.kind)}</td><td>${escapeHtml(formatEuropeParisDateTime(event.observedAt))}</td><td>${escapeHtml(event.source)}</td><td>${escapeHtml(JSON.stringify(event.detail))}</td></tr>`,
+      )
+      .join("")}</tbody>
+  </table>
+  ${renderManualTagTable("Manual wallet tags", "Wallet", state.walletTags.map((tag) => ({ entity: tag.wallet, chain: tag.chain, tag: tag.tag, notes: tag.notes, updatedAt: tag.updatedAt })))}
+  ${renderManualTagTable("Manual pair tags", "Pair", state.pairTags.map((tag) => ({ entity: tag.pair, chain: tag.chain, tag: tag.tag, notes: tag.notes, updatedAt: tag.updatedAt })))}`;
+}
+
+function renderManualTagTable(
+  title: string,
+  entityHeader: string,
+  rows: Array<{ entity: string; chain: string; tag: string; notes?: string; updatedAt: Date }>,
+) {
+  return `<h2>${escapeHtml(title)}</h2>
+  <table>
+    <thead><tr><th>${escapeHtml(entityHeader)}</th><th>Chain</th><th>Tag</th><th>Notes</th><th>Updated</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (row) =>
+          `<tr><td>${escapeHtml(row.entity)}</td><td>${escapeHtml(row.chain)}</td><td>${escapeHtml(row.tag)}</td><td>${escapeHtml(row.notes ?? "")}</td><td>${escapeHtml(formatEuropeParisDateTime(row.updatedAt))}</td></tr>`,
+      )
+      .join("")}</tbody>
+  </table>`;
 }
 
 function renderReplayAnalysisTable(rows: ReplayAnalysisRow[]) {

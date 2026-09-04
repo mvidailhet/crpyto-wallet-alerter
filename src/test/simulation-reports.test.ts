@@ -94,6 +94,30 @@ describe("simulation reports", () => {
         reason: "low-liquidity",
         details: { liquidityUsd: 500 },
       });
+      storage.saveInterestingWallet({
+        wallet: "0x00000000000000000000000000000000000000c1",
+        updatedAt: new Date("2026-09-01T09:40:00.000Z"),
+        evidence: { historicalRunnerBuys: 1 },
+      });
+      storage.saveWalletEvidence({
+        id: "historical-runner-buy:robinhood:0x00000000000000000000000000000000000000aa:0x00000000000000000000000000000000000000c1",
+        wallet: "0x00000000000000000000000000000000000000c1",
+        kind: "historical-runner-buy",
+        observedAt: new Date("2026-09-01T09:35:00.000Z"),
+        source: "historical-replay",
+        detail: { pair: "0x00000000000000000000000000000000000000aa", buyCount: 2 },
+      });
+      storage.saveWalletTag({
+        wallet: "0x00000000000000000000000000000000000000d2",
+        tag: "ignored",
+        notes: "known bot",
+        updatedAt: new Date("2026-09-01T09:45:00.000Z"),
+      });
+      storage.savePairTag({
+        pair: "0x00000000000000000000000000000000000000aa",
+        tag: "interesting",
+        updatedAt: new Date("2026-09-01T09:46:00.000Z"),
+      });
 
       await mkdir(reportsDirectory);
       const report = await generateSimulationReports(storage.getResumeState(), {
@@ -116,6 +140,11 @@ describe("simulation reports", () => {
       expect(html).toContain("Data-source failures");
       expect(html).toContain("Skipped pairs by reason");
       expect(html).toContain("Skipped pair details");
+      expect(html).toContain("Interesting wallets");
+      expect(html).toContain("Wallet evidence");
+      expect(html).toContain("Manual wallet tags");
+      expect(html).toContain("Manual pair tags");
+      expect(html).toContain("historical-runner-buy");
       expect(html).toContain("Chart markers");
       expect(html).toContain("<svg");
       expect(html).toContain("setup-created");
@@ -150,6 +179,26 @@ describe("simulation reports", () => {
       expect(csv).toContain("scanner,pair,scannedAt,reason,details");
       expect(csv).toContain(
         'live-monitor,0x00000000000000000000000000000000000000bb,2026-09-01T11:20:00,low-liquidity,"{""liquidityUsd"":500}"',
+      );
+      expect(csv).toContain("interestingWallets");
+      expect(csv).toContain("wallet,chain,updatedAt,evidence");
+      expect(csv).toContain(
+        '0x00000000000000000000000000000000000000c1,robinhood,2026-09-01T11:40:00,"{""historicalRunnerBuys"":1}"',
+      );
+      expect(csv).toContain("walletEvidence");
+      expect(csv).toContain("wallet,chain,kind,observedAt,source,detail");
+      expect(csv).toContain(
+        '0x00000000000000000000000000000000000000c1,robinhood,historical-runner-buy,2026-09-01T11:35:00,historical-replay,"{""pair"":""0x00000000000000000000000000000000000000aa"",""buyCount"":2}"',
+      );
+      expect(csv).toContain("walletTags");
+      expect(csv).toContain("wallet,chain,tag,notes,updatedAt");
+      expect(csv).toContain(
+        "0x00000000000000000000000000000000000000d2,robinhood,ignored,known bot,2026-09-01T11:45:00",
+      );
+      expect(csv).toContain("pairTags");
+      expect(csv).toContain("pair,chain,tag,notes,updatedAt");
+      expect(csv).toContain(
+        "0x00000000000000000000000000000000000000aa,robinhood,interesting,,2026-09-01T11:46:00",
       );
     } finally {
       storage.close();
