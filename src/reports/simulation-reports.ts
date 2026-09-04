@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { buildReplayAnalysisRows, type ReplayAnalysisRow } from "../analysis/replay-results.js";
+import { rankTradeSetups, type TradeSetupRanking } from "../analysis/trade-setup-ranking.js";
 import type {
   MarketSnapshotRecord,
   ResumeState,
@@ -375,7 +376,7 @@ function renderHtml(
     <div><strong>Simulated positions</strong><br>${state.simulatedPositions.length}</div>
     <div><strong>Realized PnL multiple</strong><br>${formatNumber(totalRealized)}</div>
   </section>
-  ${renderSetupTable(state.tradeSetups)}
+  ${renderSetupTable(state.tradeSetups, rankTradeSetups(state))}
   ${renderPositionTable(rows)}
   ${renderScanGapTable(state)}
   ${renderDataSourceFailureTable(state)}
@@ -448,15 +449,20 @@ function renderReplayAnalysisTable(rows: ReplayAnalysisRow[]) {
   </table>`;
 }
 
-function renderSetupTable(tradeSetups: TradeSetupRecord[]) {
+function renderSetupTable(tradeSetups: TradeSetupRecord[], rankings: TradeSetupRanking[]) {
+  const setupsById = new Map(tradeSetups.map((setup) => [setup.id, setup]));
+
+  // rankTradeSetups(state) is always called with this same tradeSetups list,
+  // so it returns exactly one ranking per setup, already ordered highest
+  // score first; render in that order rather than re-deriving it here.
   return `<h2>Trade setups</h2>
   <table>
-    <thead><tr><th>Strategy version</th><th>Trade setup</th><th>Pair</th><th>Created</th><th>Planned buy levels</th></tr></thead>
-    <tbody>${tradeSetups
-      .map(
-        (setup) =>
-          `<tr><td>${escapeHtml(setup.strategyVersionId)}</td><td>${escapeHtml(setup.id)}</td><td>${escapeHtml(setup.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(setup.createdAt))}</td><td>${escapeHtml(JSON.stringify(setup.plannedBuyLevels))}</td></tr>`,
-      )
+    <thead><tr><th>Strategy version</th><th>Trade setup</th><th>Pair</th><th>Created</th><th>Planned buy levels</th><th>Wallet boost</th><th>Ranking explanation</th></tr></thead>
+    <tbody>${rankings
+      .map((ranking) => {
+        const setup = setupsById.get(ranking.tradeSetupId) as TradeSetupRecord;
+        return `<tr><td>${escapeHtml(setup.strategyVersionId)}</td><td>${escapeHtml(setup.id)}</td><td>${escapeHtml(setup.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(setup.createdAt))}</td><td>${escapeHtml(JSON.stringify(setup.plannedBuyLevels))}</td><td>${ranking.walletBoost}</td><td>${escapeHtml(ranking.explanation)}</td></tr>`;
+      })
       .join("")}</tbody>
   </table>`;
 }
