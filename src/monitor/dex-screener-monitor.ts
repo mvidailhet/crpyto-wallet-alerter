@@ -33,6 +33,8 @@ export type DexScreenerMonitorScanResult = {
   simulation: SimulateTradeSetupsResult;
 };
 
+export type SkippedPairReason = "too-young" | "low-liquidity" | "low-volume" | "missing-market-cap";
+
 export type RunDexScreenerMonitorOnceOptions = {
   databasePath?: string;
   dataDirectory?: string;
@@ -66,23 +68,28 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
   });
 
   try {
+    let skippedPairs = 0;
+    const observedAthByPair = observedAthMarketCaps(storage.getResumeState().marketSnapshots);
+
     for (const pair of pairs) {
+      const metrics = toSnapshotMetrics(pair, capturedAt, observedAthByPair.get(pair.pairAddress));
       storage.saveMarketSnapshot({
         pair: pair.pairAddress,
         capturedAt,
         blockNumber,
-        metrics: toSnapshotMetrics(pair, capturedAt),
+        metrics,
       });
 
-      const skippedReason = skippedPairReason(pair, capturedAt, options.strategy);
+      const skippedReason = skippedPairReason(metrics, options.strategy);
       if (skippedReason) {
+        skippedPairs += 1;
         storage.saveSkippedPairSummary({
           id: `${scanner}:${pair.pairAddress}:${capturedAt.toISOString()}:${skippedReason}`,
           scanner,
           pair: pair.pairAddress,
           scannedAt: capturedAt,
           reason: skippedReason,
-          details: toSnapshotMetrics(pair, capturedAt),
+          details: metrics,
         });
       }
     }
@@ -97,8 +104,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
 
     return {
       snapshotsStored: pairs.length,
-      skippedPairs: pairs.filter((pair) => skippedPairReason(pair, capturedAt, options.strategy))
-        .length,
+      skippedPairs,
       simulation,
     };
   } finally {
@@ -126,6 +132,9 @@ export function startDexScreenerMonitor(options: StartDexScreenerMonitorOptions)
     running = true;
     try {
       await runOnce();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      options.writeLine?.(`Monitor scan failed: ${message}`);
     } finally {
       running = false;
     }
@@ -160,12 +169,22 @@ export async function fetchDexScreenerRobinhoodPairs(): Promise<DexScreenerPair[
   return payload.pairs.filter(isDexScreenerPair);
 }
 
-function toSnapshotMetrics(pair: DexScreenerPair, capturedAt: Date) {
+type ObservedAth = {
+  marketCapUsd: number;
+  capturedAt: string;
+};
+
+function toSnapshotMetrics(pair: DexScreenerPair, capturedAt: Date, previousAth?: ObservedAth) {
   const pairAgeHours =
     pair.pairCreatedAt === undefined
       ? undefined
       : (capturedAt.getTime() - pair.pairCreatedAt) / 3_600_000;
   const marketCapUsd = pair.marketCap ?? pair.fdv;
+  const observedAth =
+    marketCapUsd !== undefined &&
+    (previousAth === undefined || marketCapUsd > previousAth.marketCapUsd)
+      ? { marketCapUsd, capturedAt: capturedAt.toISOString() }
+      : previousAth;
 
   return {
     chainId: pair.chainId,
@@ -176,19 +195,18 @@ function toSnapshotMetrics(pair: DexScreenerPair, capturedAt: Date) {
     priceUsd: pair.priceUsd === undefined ? undefined : Number.parseFloat(pair.priceUsd),
     marketCapUsd,
     fdvUsd: pair.fdv,
-    athMarketCapUsd: marketCapUsd,
-    athCapturedAt:
-      pair.pairCreatedAt === undefined
-        ? capturedAt.toISOString()
-        : new Date(pair.pairCreatedAt).toISOString(),
+    athMarketCapUsd: observedAth?.marketCapUsd,
+    athCapturedAt: observedAth?.capturedAt,
     pairAgeHours,
     liquidityUsd: pair.liquidity?.usd,
     oneHourVolumeUsd: oneHourVolumeUsd(pair),
   };
 }
 
-function skippedPairReason(pair: DexScreenerPair, capturedAt: Date, strategy: StrategyConfig) {
-  const metrics = toSnapshotMetrics(pair, capturedAt);
+function skippedPairReason(
+  metrics: ReturnType<typeof toSnapshotMetrics>,
+  strategy: StrategyConfig,
+): SkippedPairReason | undefined {
   if (metrics.pairAgeHours === undefined || metrics.pairAgeHours < strategy.minimumPairAgeHours) {
     return "too-young";
   }
@@ -209,6 +227,31 @@ function skippedPairReason(pair: DexScreenerPair, capturedAt: Date, strategy: St
 
 function oneHourVolumeUsd(pair: DexScreenerPair) {
   return pair.volume?.h1 ?? 0;
+}
+
+function observedAthMarketCaps(
+  snapshots: {
+    pair: string;
+    capturedAt: Date;
+    metrics: Record<string, unknown>;
+  }[],
+) {
+  const observed = new Map<string, ObservedAth>();
+  for (const snapshot of snapshots) {
+    const marketCapUsd = snapshot.metrics.marketCapUsd;
+    if (typeof marketCapUsd !== "number" || !Number.isFinite(marketCapUsd)) {
+      continue;
+    }
+
+    const existing = observed.get(snapshot.pair);
+    if (existing === undefined || marketCapUsd > existing.marketCapUsd) {
+      observed.set(snapshot.pair, {
+        marketCapUsd,
+        capturedAt: snapshot.capturedAt.toISOString(),
+      });
+    }
+  }
+  return observed;
 }
 
 function isDexScreenerPair(value: unknown): value is DexScreenerPair {

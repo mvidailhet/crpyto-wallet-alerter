@@ -50,6 +50,25 @@ describe("DEX Screener live monitor", () => {
     const dataDirectory = await createTempDir();
     const databasePath = join(dataDirectory, "simulation.sqlite");
     const capturedAt = new Date("2026-09-04T12:00:00.000Z");
+    const seededStorage = initializeSimulationStorage({ databasePath });
+    try {
+      seededStorage.saveMarketSnapshot({
+        pair: "0x0000000000000000000000000000000000000001",
+        capturedAt: new Date("2026-09-03T12:00:00.000Z"),
+        blockNumber: 100n,
+        metrics: {
+          marketCapUsd: 20_000_000,
+          athMarketCapUsd: 20_000_000,
+          athCapturedAt: "2026-09-03T12:00:00.000Z",
+          pairAgeHours: 144,
+          liquidityUsd: 500_000,
+          oneHourVolumeUsd: 200_000,
+        },
+      });
+    } finally {
+      seededStorage.close();
+    }
+
     const fetchPairs = vi.fn<() => Promise<DexScreenerPair[]>>().mockResolvedValue([
       pair({
         pairAddress: "0x0000000000000000000000000000000000000001",
@@ -112,6 +131,7 @@ describe("DEX Screener live monitor", () => {
       const state = firstStorage.getResumeState();
       expect(state.marketSnapshots.map((snapshot) => snapshot.pair)).toEqual([
         "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000001",
         "0x0000000000000000000000000000000000000002",
         "0x0000000000000000000000000000000000000003",
         "0x0000000000000000000000000000000000000004",
@@ -124,6 +144,9 @@ describe("DEX Screener live monitor", () => {
         "too-young",
       ]);
       expect(state.tradeSetups).toHaveLength(1);
+      expect(state.tradeSetups[0]?.trigger).toMatchObject({
+        athMarketCapUsd: 20_000_000,
+      });
     } finally {
       firstStorage.close();
     }
@@ -143,20 +166,26 @@ describe("DEX Screener live monitor", () => {
     });
   });
 
-  it("runs immediately and then every configured interval until stopped", async () => {
+  it("runs immediately, survives scan failures, and then scans every configured interval until stopped", async () => {
     vi.useFakeTimers();
 
     const stop = vi.fn();
-    const runOnce = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const writeLine = vi.fn();
+    const runOnce = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("temporary DEX Screener failure"))
+      .mockResolvedValue(undefined);
 
     const monitor = startDexScreenerMonitor({
       strategy,
       runOnce,
       stop,
+      writeLine,
     });
 
     await vi.advanceTimersByTimeAsync(0);
     expect(runOnce).toHaveBeenCalledTimes(1);
+    expect(writeLine).toHaveBeenCalledWith("Monitor scan failed: temporary DEX Screener failure");
 
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
     expect(runOnce).toHaveBeenCalledTimes(2);
