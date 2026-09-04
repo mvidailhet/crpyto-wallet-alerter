@@ -7,6 +7,7 @@ import { reconstructReplaySnapshots } from "../analysis/replay-snapshots.js";
 import { loadConfig } from "../config/env.js";
 import { fetchV3Swaps } from "../dex/v3/swaps.js";
 import { generateSimulationReports } from "../reports/simulation-reports.js";
+import { chunkBlockRange } from "../rpc/blocks.js";
 import {
   initializeSimulationStorage,
   type ManualReplayPairImport,
@@ -101,11 +102,20 @@ export async function runReplayPairsCommand(
     const toBlock = readBigIntFlag(args, "--to-block");
     const resolutionMinutes = readIntegerFlag(args, "--resolution-minutes") ?? 15;
     const chunkSize = readBigIntFlag(args, "--chunk-size") ?? 100n;
+    const quoteToken = readFlag(args, "--quote-token");
+    const quotePriceUsd = readNumberFlag(args, "--quote-price-usd");
     if (fromBlock === undefined || toBlock === undefined) {
       throw new Error(
-        "Usage: npm run replay-pairs -- reconstruct --from-block 1 --to-block 2 [--resolution-minutes 15] [--chunk-size 100]",
+        "Usage: npm run replay-pairs -- reconstruct --from-block 1 --to-block 2 [--resolution-minutes 15] [--chunk-size 100] [--quote-token 0x... --quote-price-usd 1]",
       );
     }
+    if ((quoteToken === undefined) !== (quotePriceUsd === undefined)) {
+      throw new Error("--quote-token and --quote-price-usd must be provided together");
+    }
+    const quoteTokenPricesUsd =
+      quoteToken === undefined || quotePriceUsd === undefined
+        ? new Map<string, number>()
+        : new Map([[getAddress(quoteToken), quotePriceUsd]]);
 
     const storage = initializeSimulationStorage({
       databasePath: options.databasePath,
@@ -146,47 +156,51 @@ export async function runReplayPairsCommand(
             pool: pairAddress,
           },
         ];
-        const swaps = await fetchReplaySwaps(options, {
-          pools,
-          fromBlock: replayFromBlock,
-          toBlock,
-          chunkSize,
-        });
-        const snapshots = reconstructReplaySnapshots({
-          pair: {
-            tokenAddress: replayPair.tokenAddress,
-            pairAddress,
-            symbol: replayPair.symbol,
-            ranAt: replayPair.ranAt,
-          },
-          swaps,
-          resolution: { minutes: resolutionMinutes },
-        });
+        let lowConfidenceSnapshots = 0;
+        for (const chunk of chunkBlockRange(replayFromBlock, toBlock, chunkSize)) {
+          const swaps = await fetchReplaySwaps(options, {
+            pools,
+            fromBlock: chunk.fromBlock,
+            toBlock: chunk.toBlock,
+            chunkSize,
+          });
+          const snapshots = reconstructReplaySnapshots({
+            pair: {
+              tokenAddress: replayPair.tokenAddress,
+              pairAddress,
+              symbol: replayPair.symbol,
+              ranAt: replayPair.ranAt,
+            },
+            swaps,
+            resolution: { minutes: resolutionMinutes },
+            quoteTokenPricesUsd,
+          });
 
-        for (const snapshot of snapshots) {
-          storage.saveMarketSnapshot(snapshot);
-          snapshotsStored += 1;
+          for (const snapshot of snapshots) {
+            storage.saveMarketSnapshot(snapshot);
+            snapshotsStored += 1;
+            if (snapshot.metrics.confidence === "low") {
+              lowConfidenceSnapshots += 1;
+            }
+          }
+
+          storage.saveHistoricalReplayProgress({
+            pair: pairAddress,
+            fromBlock,
+            toBlock: chunk.toBlock,
+            updatedAt: new Date(),
+          });
         }
-        if (snapshots.some((snapshot) => snapshot.metrics.confidence === "low")) {
+        if (lowConfidenceSnapshots > 0) {
           storage.saveSkippedPairSummary({
             id: `historical-replay:${pairAddress}:low-confidence-reconstruction`,
             scanner: "historical-replay",
             pair: pairAddress,
             scannedAt: new Date(),
             reason: "low-confidence-reconstruction",
-            details: {
-              lowConfidenceSnapshots: snapshots.filter(
-                (snapshot) => snapshot.metrics.confidence === "low",
-              ).length,
-            },
+            details: { lowConfidenceSnapshots },
           });
         }
-        storage.saveHistoricalReplayProgress({
-          pair: pairAddress,
-          fromBlock,
-          toBlock,
-          updatedAt: new Date(),
-        });
       }
 
       writeLine(
@@ -373,6 +387,11 @@ function readBigIntFlag(args: string[], flag: string) {
 function readIntegerFlag(args: string[], flag: string) {
   const value = readFlag(args, flag);
   return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function readNumberFlag(args: string[], flag: string) {
+  const value = readFlag(args, flag);
+  return value === undefined ? undefined : Number.parseFloat(value);
 }
 
 async function fetchReplaySwaps(

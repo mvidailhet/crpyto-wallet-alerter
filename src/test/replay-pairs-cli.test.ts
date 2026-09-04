@@ -174,21 +174,52 @@ describe("replay pairs command", () => {
       writeLine: (line) => output.push(line),
     });
     await runReplayPairsCommand(
-      ["reconstruct", "--from-block", "10", "--to-block", "14", "--resolution-minutes", "15"],
+      [
+        "reconstruct",
+        "--from-block",
+        "10",
+        "--to-block",
+        "14",
+        "--resolution-minutes",
+        "15",
+        "--chunk-size",
+        "2",
+        "--quote-token",
+        "0x0000000000000000000000000000000000000002",
+        "--quote-price-usd",
+        "2",
+      ],
       {
         databasePath,
         writeLine: (line) => output.push(line),
         fetchReplaySwaps: async ({ pools, fromBlock, toBlock }) => {
           fetchedRanges.push({ pools: pools.map((pool) => pool.pool), fromBlock, toBlock });
-          return [
-            replaySwap({ blockNumber: 10n, timestamp: "2026-09-01T12:01:00.000Z" }),
-            replaySwap({ blockNumber: 11n, timestamp: "2026-09-01T12:14:00.000Z" }),
-          ];
+          if (fromBlock === 10n) {
+            return [
+              replaySwap({ blockNumber: 10n, timestamp: "2026-09-01T12:01:00.000Z" }),
+              replaySwap({ blockNumber: 11n, timestamp: "2026-09-01T12:14:00.000Z" }),
+            ];
+          }
+          return [];
         },
       },
     );
     await runReplayPairsCommand(
-      ["reconstruct", "--from-block", "10", "--to-block", "14", "--resolution-minutes", "15"],
+      [
+        "reconstruct",
+        "--from-block",
+        "10",
+        "--to-block",
+        "14",
+        "--resolution-minutes",
+        "15",
+        "--chunk-size",
+        "2",
+        "--quote-token",
+        "0x0000000000000000000000000000000000000002",
+        "--quote-price-usd",
+        "2",
+      ],
       {
         databasePath,
         writeLine: (line) => output.push(line),
@@ -203,7 +234,9 @@ describe("replay pairs command", () => {
     try {
       const state = storage.getResumeState();
       expect(fetchedRanges).toEqual([
-        { pools: ["0x00000000000000000000000000000000000000AA"], fromBlock: 10n, toBlock: 14n },
+        { pools: ["0x00000000000000000000000000000000000000AA"], fromBlock: 10n, toBlock: 11n },
+        { pools: ["0x00000000000000000000000000000000000000AA"], fromBlock: 12n, toBlock: 13n },
+        { pools: ["0x00000000000000000000000000000000000000AA"], fromBlock: 14n, toBlock: 14n },
       ]);
       expect(state.marketSnapshots).toHaveLength(1);
       expect(state.marketSnapshots[0]).toMatchObject({
@@ -212,7 +245,9 @@ describe("replay pairs command", () => {
         blockNumber: 11n,
         metrics: expect.objectContaining({
           source: "historical-replay",
-          confidence: "low",
+          confidence: "medium",
+          openPriceUsd: 4,
+          closePriceUsd: 4,
           swapCount: 2,
         }),
       });
@@ -220,17 +255,12 @@ describe("replay pairs command", () => {
         expect.arrayContaining([
           expect.objectContaining({
             scanner: "historical-replay",
-            pair: "0x00000000000000000000000000000000000000AA",
-            reason: "low-confidence-reconstruction",
-          }),
-          expect.objectContaining({
-            scanner: "historical-replay",
             pair: "0x0000000000000000000000000000000000000003",
             reason: "missing-pair-address",
           }),
         ]),
       );
-      expect(state.skippedPairSummaries).toHaveLength(2);
+      expect(state.skippedPairSummaries).toHaveLength(1);
     } finally {
       storage.close();
     }

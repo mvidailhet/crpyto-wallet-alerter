@@ -32,9 +32,6 @@ export type ReconstructedReplaySnapshot = {
     highPriceUsd?: number;
     lowPriceUsd?: number;
     closePriceUsd?: number;
-    marketCapUsd?: number;
-    highMarketCapUsd?: number;
-    lowMarketCapUsd?: number;
     oneHourVolumeUsd: number;
     swapCount: number;
     confidence: "medium" | "low";
@@ -122,9 +119,6 @@ function toReplaySnapshot(
     highPriceUsd,
     lowPriceUsd,
     closePriceUsd,
-    marketCapUsd: closePriceUsd,
-    highMarketCapUsd: highPriceUsd,
-    lowMarketCapUsd: lowPriceUsd,
     oneHourVolumeUsd: roundUsd(candle.oneHourVolumeUsd),
     swapCount: candle.swapCount,
     confidence: lowConfidenceReasons.length > 0 ? "low" : "medium",
