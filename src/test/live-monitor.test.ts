@@ -202,6 +202,7 @@ describe("DEX Screener live monitor", () => {
     const fetchPairs = vi
       .fn<() => Promise<DexScreenerPair[]>>()
       .mockRejectedValueOnce(new Error("DEX Screener rate limit"))
+      .mockRejectedValueOnce(new Error("DEX Screener rate limit"))
       .mockResolvedValue([
         pair({
           pairAddress: "0x0000000000000000000000000000000000000007",
@@ -220,7 +221,7 @@ describe("DEX Screener live monitor", () => {
     ).resolves.toMatchObject({
       snapshotsStored: 0,
       skippedPairs: 0,
-      dataSourceFailures: 1,
+      dataSourceFailuresRecorded: 1,
       backoffActive: true,
       simulation: { tradeSetupsCreated: 0 },
     });
@@ -236,7 +237,7 @@ describe("DEX Screener live monitor", () => {
     ).resolves.toMatchObject({
       snapshotsStored: 0,
       skippedPairs: 0,
-      dataSourceFailures: 0,
+      dataSourceFailuresRecorded: 0,
       backoffActive: true,
       simulation: { tradeSetupsCreated: 0 },
     });
@@ -252,8 +253,22 @@ describe("DEX Screener live monitor", () => {
         blockNumber: 202n,
       }),
     ).resolves.toMatchObject({
+      snapshotsStored: 0,
+      dataSourceFailuresRecorded: 1,
+      backoffActive: true,
+    });
+
+    await expect(
+      runDexScreenerMonitorOnce({
+        databasePath,
+        strategy,
+        fetchPairs,
+        capturedAt: new Date("2026-09-04T12:06:02.000Z"),
+        blockNumber: 203n,
+      }),
+    ).resolves.toMatchObject({
       snapshotsStored: 1,
-      dataSourceFailures: 0,
+      dataSourceFailuresRecorded: 0,
       backoffActive: false,
     });
 
@@ -264,9 +279,10 @@ describe("DEX Screener live monitor", () => {
         {
           adapter: "dex-screener",
           scanner: "dex-screener-monitor",
-          failedAt: new Date("2026-09-04T12:00:00.000Z"),
-          consecutiveFailures: 1,
-          nextRetryAt: new Date("2026-09-04T12:02:00.000Z"),
+          failedAt: new Date("2026-09-04T12:02:01.000Z"),
+          consecutiveFailures: 2,
+          nextRetryAt: new Date("2026-09-04T12:06:01.000Z"),
+          recoveredAt: new Date("2026-09-04T12:06:02.000Z"),
           error: "DEX Screener rate limit",
         },
       ]);
@@ -278,12 +294,19 @@ describe("DEX Screener live monitor", () => {
           endedAt: new Date("2026-09-04T12:00:00.000Z"),
           reason: "data-source-failure:dex-screener",
         },
+        {
+          id: "dex-screener-monitor:dex-screener:2026-09-04T11:47:01.000Z:2026-09-04T12:02:01.000Z:data-source-failure",
+          scanner: "dex-screener-monitor",
+          startedAt: new Date("2026-09-04T11:47:01.000Z"),
+          endedAt: new Date("2026-09-04T12:02:01.000Z"),
+          reason: "data-source-failure:dex-screener",
+        },
       ]);
       expect(state.scanHealth).toEqual([
         {
           scanner: "dex-screener-monitor",
-          lastScannedAt: new Date("2026-09-04T12:02:01.000Z"),
-          lastScannedBlock: 202n,
+          lastScannedAt: new Date("2026-09-04T12:06:02.000Z"),
+          lastScannedBlock: 203n,
           status: "ok",
         },
       ]);

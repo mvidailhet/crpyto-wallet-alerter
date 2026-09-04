@@ -32,6 +32,7 @@ export type DataSourceFailureRecord = {
   failedAt: Date;
   consecutiveFailures: number;
   nextRetryAt: Date;
+  recoveredAt?: Date;
   error: string;
 };
 
@@ -149,6 +150,7 @@ type DataSourceFailureRow = {
   failed_at: string;
   consecutive_failures: number;
   next_retry_at: string;
+  recovered_at: string | null;
   error: string;
 };
 
@@ -237,6 +239,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   database.exec(schemaSql);
+  ensureColumn(database, "data_source_failures", "recovered_at", "TEXT");
 
   return {
     databasePath,
@@ -294,14 +297,15 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
       database
         .prepare(
           `INSERT INTO data_source_failures (
-             adapter, scanner, failed_at, consecutive_failures, next_retry_at, error
+             adapter, scanner, failed_at, consecutive_failures, next_retry_at, recovered_at, error
            )
-           VALUES (@adapter, @scanner, @failedAt, @consecutiveFailures, @nextRetryAt, @error)
+           VALUES (@adapter, @scanner, @failedAt, @consecutiveFailures, @nextRetryAt, NULL, @error)
            ON CONFLICT(adapter) DO UPDATE SET
              scanner = excluded.scanner,
              failed_at = excluded.failed_at,
              consecutive_failures = excluded.consecutive_failures,
              next_retry_at = excluded.next_retry_at,
+             recovered_at = excluded.recovered_at,
              error = excluded.error`,
         )
         .run({
@@ -314,10 +318,14 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
         });
     },
 
-    clearDataSourceFailure(adapter: string) {
+    saveDataSourceRecovery(adapter: string, recoveredAt: Date) {
       database
-        .prepare("DELETE FROM data_source_failures WHERE adapter = @adapter")
-        .run({ adapter });
+        .prepare(
+          `UPDATE data_source_failures
+           SET recovered_at = @recoveredAt
+           WHERE adapter = @adapter`,
+        )
+        .run({ adapter, recoveredAt: toUtc(recoveredAt) });
     },
 
     saveMarketSnapshot(record: MarketSnapshotRecord) {
@@ -864,6 +872,19 @@ function roundMarketCap(value: number) {
   return Math.round(value);
 }
 
+function ensureColumn(
+  database: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (columns.some((existingColumn) => existingColumn.name === column)) {
+    return;
+  }
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 const schemaSql = `
 CREATE TABLE IF NOT EXISTS strategy_versions (
   id TEXT PRIMARY KEY,
@@ -885,6 +906,7 @@ CREATE TABLE IF NOT EXISTS data_source_failures (
   failed_at TEXT NOT NULL,
   consecutive_failures INTEGER NOT NULL,
   next_retry_at TEXT NOT NULL,
+  recovered_at TEXT,
   error TEXT NOT NULL
 );
 
@@ -990,6 +1012,7 @@ function toDataSourceFailureRecord(row: DataSourceFailureRow): DataSourceFailure
     failedAt: new Date(row.failed_at),
     consecutiveFailures: row.consecutive_failures,
     nextRetryAt: new Date(row.next_retry_at),
+    recoveredAt: row.recovered_at === null ? undefined : new Date(row.recovered_at),
     error: row.error,
   };
 }

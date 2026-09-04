@@ -504,6 +504,7 @@ describe("simulation storage initialization", () => {
             failedAt: new Date("2026-09-01T10:15:00.000Z"),
             consecutiveFailures: 3,
             nextRetryAt: new Date("2026-09-01T10:23:00.000Z"),
+            recoveredAt: undefined,
             error: "still rate limited",
           },
         ],

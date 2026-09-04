@@ -229,7 +229,7 @@ function renderCsv(state: ResumeState, rows: PositionReportRow[]) {
   const dataSourceFailureLines = [
     "",
     "dataSourceFailures",
-    "adapter,scanner,failedAt,consecutiveFailures,nextRetryAt,error",
+    "adapter,scanner,failedAt,consecutiveFailures,nextRetryAt,recoveredAt,error",
     ...state.dataSourceFailures.map((failure) =>
       [
         failure.adapter,
@@ -237,6 +237,7 @@ function renderCsv(state: ResumeState, rows: PositionReportRow[]) {
         formatEuropeParisDateTime(failure.failedAt),
         failure.consecutiveFailures,
         formatEuropeParisDateTime(failure.nextRetryAt),
+        failure.recoveredAt ? formatEuropeParisDateTime(failure.recoveredAt) : undefined,
         failure.error,
       ]
         .map((value) => escapeCsvCell(formatCsvValue(value)))
@@ -349,11 +350,11 @@ function renderScanGapTable(state: ResumeState) {
 function renderDataSourceFailureTable(state: ResumeState) {
   return `<h2>Data-source failures</h2>
   <table>
-    <thead><tr><th>Adapter</th><th>Scanner</th><th>Failed</th><th>Count</th><th>Next retry</th><th>Error</th></tr></thead>
+    <thead><tr><th>Adapter</th><th>Scanner</th><th>Failed</th><th>Count</th><th>Next retry</th><th>Recovered</th><th>Error</th></tr></thead>
     <tbody>${state.dataSourceFailures
       .map(
         (failure) =>
-          `<tr><td>${escapeHtml(failure.adapter)}</td><td>${escapeHtml(failure.scanner)}</td><td>${escapeHtml(formatEuropeParisDateTime(failure.failedAt))}</td><td>${failure.consecutiveFailures}</td><td>${escapeHtml(formatEuropeParisDateTime(failure.nextRetryAt))}</td><td>${escapeHtml(failure.error)}</td></tr>`,
+          `<tr><td>${escapeHtml(failure.adapter)}</td><td>${escapeHtml(failure.scanner)}</td><td>${escapeHtml(formatEuropeParisDateTime(failure.failedAt))}</td><td>${failure.consecutiveFailures}</td><td>${escapeHtml(formatEuropeParisDateTime(failure.nextRetryAt))}</td><td>${escapeHtml(failure.recoveredAt ? formatEuropeParisDateTime(failure.recoveredAt) : "")}</td><td>${escapeHtml(failure.error)}</td></tr>`,
       )
       .join("")}</tbody>
   </table>`;

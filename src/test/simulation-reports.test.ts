@@ -140,9 +140,11 @@ describe("simulation reports", () => {
       expect(csv).toContain("scanner,startedAt,endedAt,reason");
       expect(csv).toContain("live-monitor,2026-09-01T11:00:00,2026-09-01T11:15:00,process-restart");
       expect(csv).toContain("dataSourceFailures");
-      expect(csv).toContain("adapter,scanner,failedAt,consecutiveFailures,nextRetryAt,error");
       expect(csv).toContain(
-        "dex-screener,live-monitor,2026-09-01T11:30:00,2,2026-09-01T11:34:00,HTTP 429",
+        "adapter,scanner,failedAt,consecutiveFailures,nextRetryAt,recoveredAt,error",
+      );
+      expect(csv).toContain(
+        "dex-screener,live-monitor,2026-09-01T11:30:00,2,2026-09-01T11:34:00,,HTTP 429",
       );
       expect(csv).toContain("skippedPairs");
       expect(csv).toContain("scanner,pair,scannedAt,reason,details");

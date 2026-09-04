@@ -30,7 +30,7 @@ export type DexScreenerPair = {
 export type DexScreenerMonitorScanResult = {
   snapshotsStored: number;
   skippedPairs: number;
-  dataSourceFailures: number;
+  dataSourceFailuresRecorded: number;
   backoffActive: boolean;
   simulation: SimulateTradeSetupsResult;
 };
@@ -72,7 +72,9 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
   try {
     const existingFailure = storage
       .getResumeState()
-      .dataSourceFailures.find((failure) => failure.adapter === adapter);
+      .dataSourceFailures.find(
+        (failure) => failure.adapter === adapter && failure.recoveredAt === undefined,
+      );
     if (existingFailure && existingFailure.nextRetryAt > capturedAt) {
       const simulation = storage.simulateTradeSetups(options.strategy);
       storage.saveScanHealth({
@@ -84,7 +86,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
       return {
         snapshotsStored: 0,
         skippedPairs: 0,
-        dataSourceFailures: 0,
+        dataSourceFailuresRecorded: 0,
         backoffActive: true,
         simulation,
       };
@@ -125,12 +127,13 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
       return {
         snapshotsStored: 0,
         skippedPairs: 0,
-        dataSourceFailures: 1,
+        dataSourceFailuresRecorded: 1,
         backoffActive: true,
         simulation,
       };
     }
 
+    storage.saveDataSourceRecovery(adapter, capturedAt);
     let skippedPairs = 0;
     const observedAthByPair = observedAthMarketCaps(storage.getResumeState().marketSnapshots);
 
@@ -168,7 +171,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
     return {
       snapshotsStored: pairs.length,
       skippedPairs,
-      dataSourceFailures: 0,
+      dataSourceFailuresRecorded: 0,
       backoffActive: false,
       simulation,
     };
@@ -186,7 +189,7 @@ export function startDexScreenerMonitor(options: StartDexScreenerMonitorOptions)
     (async () => {
       const result = await runDexScreenerMonitorOnce(options);
       options.writeLine?.(
-        `Stored ${result.snapshotsStored} snapshot(s), skipped ${result.skippedPairs} pair(s), recorded ${result.dataSourceFailures} data-source failure(s), created ${result.simulation.tradeSetupsCreated} trade setup(s), opened ${result.simulation.positionsOpened} simulated position(s).`,
+        `Stored ${result.snapshotsStored} snapshot(s), skipped ${result.skippedPairs} pair(s), recorded ${result.dataSourceFailuresRecorded} data-source failure(s), created ${result.simulation.tradeSetupsCreated} trade setup(s), opened ${result.simulation.positionsOpened} simulated position(s).`,
       );
     });
 
