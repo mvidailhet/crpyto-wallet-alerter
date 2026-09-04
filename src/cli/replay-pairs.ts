@@ -78,7 +78,7 @@ export function parseManualReplayPairsCsv(csv: string): ManualReplayPairImport[]
   }
 
   const headerIndexes = new Map(headers.map((header, index) => [header.trim(), index]));
-  for (const requiredHeader of ["tokenAddress", "label", "ranAt"]) {
+  for (const requiredHeader of ["tokenAddress", "symbol", "label", "ranAt"]) {
     if (!headerIndexes.has(requiredHeader)) {
       throw new Error(`CSV is missing required header "${requiredHeader}"`);
     }
@@ -94,6 +94,7 @@ function toManualReplayPairImport(
 ): ManualReplayPairImport {
   const tokenAddress = requiredCell(row, headerIndexes, "tokenAddress", rowNumber);
   const pairAddress = optionalCell(row, headerIndexes, "pairAddress");
+  const symbol = requiredCell(row, headerIndexes, "symbol", rowNumber);
   const label = requiredCell(row, headerIndexes, "label", rowNumber);
   const ranAtText = requiredCell(row, headerIndexes, "ranAt", rowNumber);
   const ranAt = new Date(ranAtText);
@@ -123,7 +124,7 @@ function toManualReplayPairImport(
   return {
     tokenAddress,
     pairAddress,
-    symbol: optionalCell(row, headerIndexes, "symbol"),
+    symbol,
     label: label as ManualReplayPairLabel,
     notes: optionalCell(row, headerIndexes, "notes"),
     ranAt,
@@ -196,7 +197,7 @@ function formatManualReplayPairCsvRow(record: ManualReplayPairRecord) {
     record.symbol ?? "",
     record.label,
     record.notes ?? "",
-    record.ranAt.toISOString(),
+    formatEuropeParisDateTime(record.ranAt),
   ]
     .map(escapeCsvCell)
     .join(",");
@@ -204,6 +205,25 @@ function formatManualReplayPairCsvRow(record: ManualReplayPairRecord) {
 
 function escapeCsvCell(value: string) {
   return /[",\n\r]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+}
+
+function formatEuropeParisDateTime(date: Date) {
+  const parts = new Map(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Paris",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+
+  return `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}T${parts.get("hour")}:${parts.get("minute")}:${parts.get("second")}`;
 }
 
 function readFlag(args: string[], flag: string) {

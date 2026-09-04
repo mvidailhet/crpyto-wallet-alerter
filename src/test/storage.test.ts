@@ -231,6 +231,7 @@ describe("simulation storage initialization", () => {
       },
       {
         tokenAddress: "0x00000000000000000000000000000000000000cc",
+        symbol: "FAIL",
         label: "failed",
         ranAt: new Date("2026-08-16T12:00:00.000Z"),
       },
@@ -255,7 +256,7 @@ describe("simulation storage initialization", () => {
         {
           tokenAddress: "0x00000000000000000000000000000000000000cc",
           pairAddress: undefined,
-          symbol: undefined,
+          symbol: "FAIL",
           label: "failed",
           notes: undefined,
           ranAt: new Date("2026-08-16T12:00:00.000Z"),

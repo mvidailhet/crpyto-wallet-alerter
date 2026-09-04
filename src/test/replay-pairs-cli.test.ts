@@ -47,8 +47,8 @@ describe("replay pairs command", () => {
     expect(output).toEqual([
       "Imported 2 manual replay pair(s): 2 inserted, 0 updated.",
       "tokenAddress,pairAddress,symbol,label,notes,ranAt",
-      "0x00000000000000000000000000000000000000AA,0x00000000000000000000000000000000000000bb,RUN,runner,ran from 100k,2026-08-15T12:00:00.000Z",
-      "0x00000000000000000000000000000000000000cc,,FAIL,failed,,2026-08-16T12:00:00.000Z",
+      "0x00000000000000000000000000000000000000AA,0x00000000000000000000000000000000000000bb,RUN,runner,ran from 100k,2026-08-15T14:00:00",
+      "0x00000000000000000000000000000000000000cc,,FAIL,failed,,2026-08-16T14:00:00",
     ]);
   });
 
@@ -74,6 +74,37 @@ describe("replay pairs command", () => {
         writeLine: (line) => output.push(line),
       }),
     ).rejects.toThrow('Row 3 has unsupported label "winner"');
+
+    await runReplayPairsCommand(["list"], {
+      databasePath,
+      writeLine: (line) => output.push(line),
+    });
+
+    expect(output).toEqual(["tokenAddress,pairAddress,symbol,label,notes,ranAt"]);
+  });
+
+  it("rejects rows without a symbol before persisting any imported rows", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const csvPath = join(dataDirectory, "pairs.csv");
+    const output: string[] = [];
+
+    await writeFile(
+      csvPath,
+      [
+        "tokenAddress,pairAddress,symbol,label,notes,ranAt",
+        "0x00000000000000000000000000000000000000aa,,RUN,runner,,2026-08-15T12:00:00.000Z",
+        "0x00000000000000000000000000000000000000cc,,,failed,,2026-08-16T12:00:00.000Z",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await expect(
+      runReplayPairsCommand(["import", "--csv", csvPath], {
+        databasePath,
+        writeLine: (line) => output.push(line),
+      }),
+    ).rejects.toThrow("Row 3 is missing symbol");
 
     await runReplayPairsCommand(["list"], {
       databasePath,
