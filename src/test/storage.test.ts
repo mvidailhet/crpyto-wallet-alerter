@@ -66,12 +66,15 @@ describe("simulation storage initialization", () => {
         "interesting_wallets",
         "manual_replay_pairs",
         "market_snapshots",
+        "pair_tags",
         "scan_gaps",
         "scan_health",
         "simulated_positions",
         "skipped_pair_summaries",
         "strategy_versions",
         "trade_setups",
+        "wallet_evidence",
+        "wallet_tags",
       ]);
     } finally {
       storage.close();
@@ -409,6 +412,25 @@ describe("simulation storage initialization", () => {
         updatedAt: new Date("2026-09-01T10:02:30.000Z"),
         evidence: { profitableSetups: 2 },
       });
+      firstStorage.saveWalletEvidence({
+        id: "historical-runner-buy:robinhood:0x00000000000000000000000000000000000000aa:0x00000000000000000000000000000000000000b0",
+        wallet: "0x00000000000000000000000000000000000000b0",
+        kind: "historical-runner-buy",
+        observedAt: new Date("2026-09-01T09:30:00.000Z"),
+        source: "historical-replay",
+        detail: { pair: "0x00000000000000000000000000000000000000aa", symbol: "RUN", buyCount: 3 },
+      });
+      firstStorage.saveWalletTag({
+        wallet: "0x00000000000000000000000000000000000000c1",
+        tag: "ignored",
+        notes: "known bot",
+        updatedAt: new Date("2026-09-01T10:06:00.000Z"),
+      });
+      firstStorage.savePairTag({
+        pair: "0x00000000000000000000000000000000000000aa",
+        tag: "interesting",
+        updatedAt: new Date("2026-09-01T10:07:00.000Z"),
+      });
       firstStorage.saveTradeSetup({
         id: "setup-1",
         strategyVersionId: "strategy-v1",
@@ -520,8 +542,42 @@ describe("simulation storage initialization", () => {
         interestingWallets: [
           {
             wallet: "0x00000000000000000000000000000000000000b0",
+            chain: "robinhood",
             updatedAt: new Date("2026-09-01T10:02:30.000Z"),
             evidence: { profitableSetups: 2 },
+          },
+        ],
+        walletEvidence: [
+          {
+            id: "historical-runner-buy:robinhood:0x00000000000000000000000000000000000000aa:0x00000000000000000000000000000000000000b0",
+            wallet: "0x00000000000000000000000000000000000000b0",
+            chain: "robinhood",
+            kind: "historical-runner-buy",
+            observedAt: new Date("2026-09-01T09:30:00.000Z"),
+            source: "historical-replay",
+            detail: {
+              pair: "0x00000000000000000000000000000000000000aa",
+              symbol: "RUN",
+              buyCount: 3,
+            },
+          },
+        ],
+        walletTags: [
+          {
+            wallet: "0x00000000000000000000000000000000000000c1",
+            chain: "robinhood",
+            tag: "ignored",
+            notes: "known bot",
+            updatedAt: new Date("2026-09-01T10:06:00.000Z"),
+          },
+        ],
+        pairTags: [
+          {
+            pair: "0x00000000000000000000000000000000000000aa",
+            chain: "robinhood",
+            tag: "interesting",
+            notes: undefined,
+            updatedAt: new Date("2026-09-01T10:07:00.000Z"),
           },
         ],
         manualReplayPairs: [],

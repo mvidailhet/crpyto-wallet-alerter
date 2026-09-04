@@ -43,11 +43,58 @@ export type MarketSnapshotRecord = {
   metrics: JsonObject;
 };
 
+export type WalletChain = "robinhood";
+
 export type InterestingWalletRecord = {
   wallet: string;
+  chain: WalletChain;
   updatedAt: Date;
   evidence: JsonObject;
 };
+
+export type SaveInterestingWalletInput = Omit<InterestingWalletRecord, "chain"> & {
+  chain?: WalletChain;
+};
+
+export type WalletEvidenceKind = "historical-runner-buy";
+
+export type WalletEvidenceSource = "historical-replay";
+
+export type WalletEvidenceRecord = {
+  id: string;
+  wallet: string;
+  chain: WalletChain;
+  kind: WalletEvidenceKind;
+  observedAt: Date;
+  source: WalletEvidenceSource;
+  detail: JsonObject;
+};
+
+export type SaveWalletEvidenceInput = Omit<WalletEvidenceRecord, "chain"> & {
+  chain?: WalletChain;
+};
+
+export type ManualTag = "interesting" | "ignored";
+
+export type WalletTagRecord = {
+  wallet: string;
+  chain: WalletChain;
+  tag: ManualTag;
+  notes?: string;
+  updatedAt: Date;
+};
+
+export type SaveWalletTagInput = Omit<WalletTagRecord, "chain"> & { chain?: WalletChain };
+
+export type PairTagRecord = {
+  pair: string;
+  chain: WalletChain;
+  tag: ManualTag;
+  notes?: string;
+  updatedAt: Date;
+};
+
+export type SavePairTagInput = Omit<PairTagRecord, "chain"> & { chain?: WalletChain };
 
 export type TradeSetupRecord = {
   id: string;
@@ -135,6 +182,9 @@ export type ResumeState = {
   dataSourceFailures: DataSourceFailureRecord[];
   marketSnapshots: MarketSnapshotRecord[];
   interestingWallets: InterestingWalletRecord[];
+  walletEvidence: WalletEvidenceRecord[];
+  walletTags: WalletTagRecord[];
+  pairTags: PairTagRecord[];
   manualReplayPairs: ManualReplayPairRecord[];
   tradeSetups: TradeSetupRecord[];
   simulatedPositions: SimulatedPositionRecord[];
@@ -176,9 +226,31 @@ type MarketSnapshotRow = {
 
 type InterestingWalletRow = {
   wallet: string;
+  chain: string;
   updated_at: string;
   evidence_json: string;
 };
+
+type WalletEvidenceRow = {
+  id: string;
+  wallet: string;
+  chain: string;
+  kind: string;
+  observed_at: string;
+  source: string;
+  detail_json: string;
+};
+
+type ManualTagRow = {
+  chain: string;
+  tag: ManualTag;
+  notes: string | null;
+  updated_at: string;
+};
+
+type WalletTagRow = ManualTagRow & { wallet: string };
+
+type PairTagRow = ManualTagRow & { pair: string };
 
 type TradeSetupRow = {
   id: string;
@@ -260,6 +332,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
   database.pragma("foreign_keys = ON");
   database.exec(schemaSql);
   ensureColumn(database, "data_source_failures", "recovered_at", "TEXT");
+  ensureColumn(database, "interesting_wallets", "chain", "TEXT NOT NULL DEFAULT 'robinhood'");
 
   return {
     databasePath,
@@ -390,20 +463,111 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
       return row ? toHistoricalReplayProgressRecord(row) : undefined;
     },
 
-    saveInterestingWallet(record: InterestingWalletRecord) {
+    saveInterestingWallet(record: SaveInterestingWalletInput) {
       database
         .prepare(
-          `INSERT INTO interesting_wallets (wallet, updated_at, evidence_json)
-           VALUES (@wallet, @updatedAt, @evidenceJson)
+          `INSERT INTO interesting_wallets (wallet, chain, updated_at, evidence_json)
+           VALUES (@wallet, @chain, @updatedAt, @evidenceJson)
            ON CONFLICT(wallet) DO UPDATE SET
+             chain = excluded.chain,
              updated_at = excluded.updated_at,
              evidence_json = excluded.evidence_json`,
         )
         .run({
           wallet: record.wallet,
+          chain: record.chain ?? "robinhood",
           updatedAt: toUtc(record.updatedAt),
           evidenceJson: JSON.stringify(record.evidence),
         });
+    },
+
+    deleteInterestingWallet(wallet: string) {
+      database.prepare("DELETE FROM interesting_wallets WHERE wallet = @wallet").run({ wallet });
+    },
+
+    saveWalletEvidence(record: SaveWalletEvidenceInput) {
+      database
+        .prepare(
+          `INSERT INTO wallet_evidence (id, wallet, chain, kind, observed_at, source, detail_json)
+           VALUES (@id, @wallet, @chain, @kind, @observedAt, @source, @detailJson)
+           ON CONFLICT(id) DO UPDATE SET
+             wallet = excluded.wallet,
+             chain = excluded.chain,
+             kind = excluded.kind,
+             observed_at = excluded.observed_at,
+             source = excluded.source,
+             detail_json = excluded.detail_json`,
+        )
+        .run({
+          id: record.id,
+          wallet: record.wallet,
+          chain: record.chain ?? "robinhood",
+          kind: record.kind,
+          observedAt: toUtc(record.observedAt),
+          source: record.source,
+          detailJson: JSON.stringify(record.detail),
+        });
+    },
+
+    listWalletEvidence(): WalletEvidenceRecord[] {
+      return database
+        .prepare("SELECT * FROM wallet_evidence ORDER BY observed_at, id")
+        .all()
+        .map((row) => toWalletEvidenceRecord(row as WalletEvidenceRow));
+    },
+
+    saveWalletTag(record: SaveWalletTagInput) {
+      database
+        .prepare(
+          `INSERT INTO wallet_tags (wallet, chain, tag, notes, updated_at)
+           VALUES (@wallet, @chain, @tag, @notes, @updatedAt)
+           ON CONFLICT(wallet) DO UPDATE SET
+             chain = excluded.chain,
+             tag = excluded.tag,
+             notes = excluded.notes,
+             updated_at = excluded.updated_at`,
+        )
+        .run({
+          wallet: record.wallet,
+          chain: record.chain ?? "robinhood",
+          tag: record.tag,
+          notes: optionalText(record.notes),
+          updatedAt: toUtc(record.updatedAt),
+        });
+    },
+
+    listWalletTags(): WalletTagRecord[] {
+      return database
+        .prepare("SELECT * FROM wallet_tags ORDER BY wallet")
+        .all()
+        .map((row) => toWalletTagRecord(row as WalletTagRow));
+    },
+
+    savePairTag(record: SavePairTagInput) {
+      database
+        .prepare(
+          `INSERT INTO pair_tags (pair, chain, tag, notes, updated_at)
+           VALUES (@pair, @chain, @tag, @notes, @updatedAt)
+           ON CONFLICT(pair) DO UPDATE SET
+             chain = excluded.chain,
+             tag = excluded.tag,
+             notes = excluded.notes,
+             updated_at = excluded.updated_at`,
+        )
+        .run({
+          pair: record.pair,
+          chain: record.chain ?? "robinhood",
+          tag: record.tag,
+          notes: optionalText(record.notes),
+          updatedAt: toUtc(record.updatedAt),
+        });
+    },
+
+    listPairTags(): PairTagRecord[] {
+      return database
+        .prepare("SELECT * FROM pair_tags ORDER BY pair")
+        .all()
+        .map((row) => toPairTagRecord(row as PairTagRow));
     },
 
     saveTradeSetup(record: TradeSetupRecord) {
@@ -713,6 +877,9 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .prepare("SELECT * FROM interesting_wallets ORDER BY updated_at, wallet")
           .all()
           .map((row) => toInterestingWalletRecord(row as InterestingWalletRow)),
+        walletEvidence: this.listWalletEvidence(),
+        walletTags: this.listWalletTags(),
+        pairTags: this.listPairTags(),
         manualReplayPairs: this.listManualReplayPairs(),
         tradeSetups: database
           .prepare("SELECT * FROM trade_setups ORDER BY created_at, id")
@@ -983,8 +1150,35 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 
 CREATE TABLE IF NOT EXISTS interesting_wallets (
   wallet TEXT PRIMARY KEY,
+  chain TEXT NOT NULL DEFAULT 'robinhood',
   updated_at TEXT NOT NULL,
   evidence_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wallet_evidence (
+  id TEXT PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'robinhood',
+  kind TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  detail_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wallet_tags (
+  wallet TEXT PRIMARY KEY,
+  chain TEXT NOT NULL DEFAULT 'robinhood',
+  tag TEXT NOT NULL CHECK (tag IN ('interesting', 'ignored')),
+  notes TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pair_tags (
+  pair TEXT PRIMARY KEY,
+  chain TEXT NOT NULL DEFAULT 'robinhood',
+  tag TEXT NOT NULL CHECK (tag IN ('interesting', 'ignored')),
+  notes TEXT,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS trade_setups (
@@ -1099,8 +1293,41 @@ function toMarketSnapshotRecord(row: MarketSnapshotRow): MarketSnapshotRecord {
 function toInterestingWalletRecord(row: InterestingWalletRow): InterestingWalletRecord {
   return {
     wallet: row.wallet,
+    chain: row.chain as WalletChain,
     updatedAt: new Date(row.updated_at),
     evidence: parseJson<JsonObject>(row.evidence_json),
+  };
+}
+
+function toWalletEvidenceRecord(row: WalletEvidenceRow): WalletEvidenceRecord {
+  return {
+    id: row.id,
+    wallet: row.wallet,
+    chain: row.chain as WalletChain,
+    kind: row.kind as WalletEvidenceKind,
+    observedAt: new Date(row.observed_at),
+    source: row.source as WalletEvidenceSource,
+    detail: parseJson<JsonObject>(row.detail_json),
+  };
+}
+
+function toWalletTagRecord(row: WalletTagRow): WalletTagRecord {
+  return {
+    wallet: row.wallet,
+    chain: row.chain as WalletChain,
+    tag: row.tag,
+    notes: row.notes ?? undefined,
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function toPairTagRecord(row: PairTagRow): PairTagRecord {
+  return {
+    pair: row.pair,
+    chain: row.chain as WalletChain,
+    tag: row.tag,
+    notes: row.notes ?? undefined,
+    updatedAt: new Date(row.updated_at),
   };
 }
 

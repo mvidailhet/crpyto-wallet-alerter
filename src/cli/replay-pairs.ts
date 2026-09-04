@@ -5,9 +5,13 @@ import { getAddress } from "viem";
 
 import { buildReplayAnalysisRows, summarizeReplayOutcomes } from "../analysis/replay-results.js";
 import { reconstructReplaySnapshots } from "../analysis/replay-snapshots.js";
+import { deriveHistoricalRunnerEvidence } from "../analysis/wallet-evidence.js";
 import { loadConfig } from "../config/env.js";
 import { fetchV3Swaps } from "../dex/v3/swaps.js";
-import { generateSimulationReports } from "../reports/simulation-reports.js";
+import {
+  buildWalletInsightCsvSections,
+  generateSimulationReports,
+} from "../reports/simulation-reports.js";
 import { chunkBlockRange } from "../rpc/blocks.js";
 import { loadStrategyConfig } from "../strategies/configs.js";
 import {
@@ -15,6 +19,7 @@ import {
   type ManualReplayPairImport,
   type ManualReplayPairLabel,
   type ManualReplayPairRecord,
+  type ManualTag,
   type ResumeState,
 } from "../storage/simulation-storage.js";
 import type { DecodedV3Swap, DiscoveredPool } from "../types/evm.js";
@@ -151,11 +156,12 @@ export async function runReplayPairsCommand(
     const toBlock = readBigIntFlag(args, "--to-block");
     const resolutionMinutes = readIntegerFlag(args, "--resolution-minutes") ?? 15;
     const chunkSize = readBigIntFlag(args, "--chunk-size") ?? 100n;
+    const maxWallets = readIntegerFlag(args, "--max-wallets") ?? 25;
     const quoteToken = readFlag(args, "--quote-token");
     const quotePriceUsd = readNumberFlag(args, "--quote-price-usd");
     if (fromBlock === undefined || toBlock === undefined) {
       throw new Error(
-        "Usage: npm run replay-pairs -- reconstruct --from-block 1 --to-block 2 [--resolution-minutes 15] [--chunk-size 100] [--quote-token 0x... --quote-price-usd 1]",
+        "Usage: npm run replay-pairs -- reconstruct --from-block 1 --to-block 2 [--resolution-minutes 15] [--chunk-size 100] [--max-wallets 25] [--quote-token 0x... --quote-price-usd 1]",
       );
     }
     if ((quoteToken === undefined) !== (quotePriceUsd === undefined)) {
@@ -174,6 +180,10 @@ export async function runReplayPairsCommand(
     try {
       let snapshotsStored = 0;
       let skippedPairs = 0;
+      let walletEvidenceEvents = 0;
+      let runnerPairsProcessed = 0;
+      const ignoredWallets = ignoredTargets(storage.listWalletTags(), (tag) => tag.wallet);
+      const ignoredPairs = ignoredTargets(storage.listPairTags(), (tag) => tag.pair);
 
       for (const replayPair of storage.listManualReplayPairs()) {
         if (!replayPair.pairAddress) {
@@ -191,11 +201,12 @@ export async function runReplayPairsCommand(
 
         const pairAddress = getAddress(replayPair.pairAddress);
         const progress = storage.getHistoricalReplayProgress(pairAddress);
-        const replayFromBlock =
+        const replayFromBlock: bigint =
           progress && progress.toBlock >= fromBlock ? progress.toBlock + 1n : fromBlock;
         if (replayFromBlock > toBlock) {
           continue;
         }
+        const coversFullRange = replayFromBlock === fromBlock;
 
         const pools: DiscoveredPool[] = [
           {
@@ -206,6 +217,7 @@ export async function runReplayPairsCommand(
           },
         ];
         let lowConfidenceSnapshots = 0;
+        const pairSwaps: DecodedV3Swap[] = [];
         for (const chunk of chunkBlockRange(replayFromBlock, toBlock, chunkSize)) {
           const swaps = await fetchReplaySwaps(options, {
             pools,
@@ -213,6 +225,7 @@ export async function runReplayPairsCommand(
             toBlock: chunk.toBlock,
             chunkSize,
           });
+          pairSwaps.push(...swaps);
           const snapshots = reconstructReplaySnapshots({
             pair: {
               tokenAddress: replayPair.tokenAddress,
@@ -250,10 +263,43 @@ export async function runReplayPairsCommand(
             details: { lowConfidenceSnapshots },
           });
         }
+
+        // Wallet evidence is only rewritten on a run that covers the pair's
+        // whole requested block range; an incremental resume would recompute
+        // buy counts and first-buy times from a partial window.
+        if (replayPair.label === "runner" && coversFullRange && !ignoredPairs.has(pairAddress)) {
+          runnerPairsProcessed += 1;
+          const evidence = deriveHistoricalRunnerEvidence({
+            pair: {
+              tokenAddress: replayPair.tokenAddress,
+              pairAddress,
+              symbol: replayPair.symbol,
+              ranAt: replayPair.ranAt,
+            },
+            swaps: pairSwaps,
+            maxWallets,
+          });
+          for (const event of evidence) {
+            if (ignoredWallets.has(event.wallet)) {
+              continue;
+            }
+            storage.saveWalletEvidence(event);
+            storage.saveInterestingWallet({
+              wallet: event.wallet,
+              chain: event.chain,
+              updatedAt: replayPair.ranAt,
+              evidence: { ...event.detail, kind: event.kind },
+            });
+            walletEvidenceEvents += 1;
+          }
+        }
       }
 
       writeLine(
         `Reconstructed ${snapshotsStored} historical replay snapshot(s), skipped ${skippedPairs} manual replay pair(s).`,
+      );
+      writeLine(
+        `Recorded ${walletEvidenceEvents} wallet evidence event(s) from ${runnerPairsProcessed} runner pair(s).`,
       );
     } finally {
       storage.close();
@@ -261,9 +307,74 @@ export async function runReplayPairsCommand(
     return;
   }
 
+  if (command === "tag-wallet" || command === "tag-pair") {
+    const isWallet = command === "tag-wallet";
+    const target = readFlag(args, isWallet ? "--wallet" : "--pair");
+    const tag = readFlag(args, "--tag");
+    const notes = readFlag(args, "--notes");
+    if (!target || !isManualTag(tag)) {
+      throw new Error(
+        `Usage: npm run replay-pairs -- ${command} --${isWallet ? "wallet" : "pair"} 0x... --tag <interesting|ignored> [--notes "reason"]`,
+      );
+    }
+
+    const address = getAddress(target);
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      if (isWallet) {
+        storage.saveWalletTag({ wallet: address, tag, notes, updatedAt: new Date() });
+        // Keep the interesting-wallet set in step with the manual override.
+        if (tag === "interesting") {
+          storage.saveInterestingWallet({
+            wallet: address,
+            updatedAt: new Date(),
+            evidence: { source: "manual-tag", notes: notes ?? null },
+          });
+        } else {
+          storage.deleteInterestingWallet(address);
+        }
+      } else {
+        storage.savePairTag({ pair: address, tag, notes, updatedAt: new Date() });
+      }
+      writeLine(`Tagged ${isWallet ? "wallet" : "pair"} ${address} as ${tag}.`);
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
+  if (command === "wallets") {
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      const [, ...sections] = buildWalletInsightCsvSections(storage.getResumeState());
+      for (const line of sections) {
+        writeLine(line);
+      }
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
   throw new Error(
-    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct | run --strategy baseline-96h>",
+    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct | run --strategy baseline-96h | wallets | tag-wallet --wallet 0x... --tag interesting | tag-pair --pair 0x... --tag ignored>",
   );
+}
+
+function isManualTag(value: string | undefined): value is ManualTag {
+  return value === "interesting" || value === "ignored";
+}
+
+function ignoredTargets<T extends { tag: ManualTag }>(tags: T[], pick: (tag: T) => string) {
+  return new Set(tags.filter((tag) => tag.tag === "ignored").map(pick));
 }
 
 export function parseManualReplayPairsCsv(csv: string): ManualReplayPairImport[] {
