@@ -9,8 +9,29 @@ import {
   resolveSimulationDatabasePath,
   type ManualReplayPairImport,
 } from "../storage/simulation-storage.js";
+import type { StrategyConfig } from "../strategies/configs.js";
 
 const tempDirs: string[] = [];
+
+const strategy: StrategyConfig = {
+  version: "baseline-test",
+  chain: "robinhood",
+  scanIntervalMinutes: 15,
+  topPairsByOneHourVolume: 50,
+  minimumPairAgeHours: 96,
+  minimumLiquidityUsd: 250_000,
+  minimumOneHourVolumeUsd: 100_000,
+  athMarketCapUsd: { minimum: 7_000_000, maximum: 25_000_000 },
+  currentMarketCapWithinAthPercent: 30,
+  athAgeHours: { minimum: 12, maximum: 168 },
+  plannedBuyLevels: [
+    { athPullbackPercent: 35, allocationPercent: 25 },
+    { athPullbackPercent: 50, allocationPercent: 25 },
+    { athPullbackPercent: 65, allocationPercent: 25 },
+    { athPullbackPercent: 80, allocationPercent: 25 },
+  ],
+  maximumActiveTradeSetups: 10,
+};
 
 async function createTempDir() {
   const directory = await mkdtemp(join(tmpdir(), "wallet-alerter-storage-"));
@@ -49,6 +70,181 @@ describe("simulation storage initialization", () => {
         "skipped_pair_summaries",
         "strategy_versions",
         "trade_setups",
+      ]);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("creates trade setups from stored snapshots and applies conservative simulated fills", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const storage = initializeSimulationStorage({ databasePath });
+
+    try {
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000aa",
+        capturedAt: new Date("2026-09-01T10:00:00.000Z"),
+        blockNumber: 100n,
+        metrics: {
+          marketCapUsd: 16_000_000,
+          athMarketCapUsd: 20_000_000,
+          athCapturedAt: "2026-08-31T10:00:00.000Z",
+          pairAgeHours: 120,
+          liquidityUsd: 300_000,
+          oneHourVolumeUsd: 150_000,
+        },
+      });
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000aa",
+        capturedAt: new Date("2026-09-01T11:00:00.000Z"),
+        blockNumber: 101n,
+        metrics: { marketCapUsd: 10_000_000 },
+      });
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000aa",
+        capturedAt: new Date("2026-09-01T12:00:00.000Z"),
+        blockNumber: 102n,
+        metrics: { lowMarketCapUsd: 6_000_000, highMarketCapUsd: 21_000_000 },
+      });
+
+      expect(storage.simulateTradeSetups(strategy)).toEqual({
+        tradeSetupsCreated: 1,
+        tradeSetupsUpdated: 0,
+        positionsOpened: 3,
+        positionsClosed: 2,
+      });
+      expect(storage.simulateTradeSetups(strategy)).toEqual({
+        tradeSetupsCreated: 0,
+        tradeSetupsUpdated: 1,
+        positionsOpened: 0,
+        positionsClosed: 0,
+      });
+
+      const state = storage.getResumeState();
+      expect(state.tradeSetups).toHaveLength(1);
+      expect(state.tradeSetups[0]).toMatchObject({
+        id: "baseline-test:0x00000000000000000000000000000000000000aa",
+        strategyVersionId: "baseline-test",
+        pair: "0x00000000000000000000000000000000000000aa",
+        createdAt: new Date("2026-09-01T10:00:00.000Z"),
+        plannedBuyLevels: [
+          { marketCapUsd: 13_000_000, athPullbackPercent: 35, allocationPercent: 25 },
+          { marketCapUsd: 10_000_000, athPullbackPercent: 50, allocationPercent: 25 },
+          { marketCapUsd: 7_000_000, athPullbackPercent: 65, allocationPercent: 25 },
+          { marketCapUsd: 4_000_000, athPullbackPercent: 80, allocationPercent: 25 },
+        ],
+      });
+      expect(state.simulatedPositions).toEqual([
+        {
+          id: "baseline-test:0x00000000000000000000000000000000000000aa:10000000",
+          tradeSetupId: "baseline-test:0x00000000000000000000000000000000000000aa",
+          strategyVersionId: "baseline-test",
+          openedAt: new Date("2026-09-01T11:00:00.000Z"),
+          entry: {
+            marketCapUsd: 10_000_000,
+            allocationPercent: 25,
+            stopLossMarketCapUsd: 7_000_000,
+            takeProfitMarketCapUsd: 20_000_000,
+            closedAt: "2026-09-01T12:00:00.000Z",
+            exitMarketCapUsd: 7_000_000,
+            exitReason: "stop-loss",
+            moonbagPercent: 0,
+          },
+          status: "closed",
+        },
+        {
+          id: "baseline-test:0x00000000000000000000000000000000000000aa:13000000",
+          tradeSetupId: "baseline-test:0x00000000000000000000000000000000000000aa",
+          strategyVersionId: "baseline-test",
+          openedAt: new Date("2026-09-01T11:00:00.000Z"),
+          entry: {
+            marketCapUsd: 13_000_000,
+            allocationPercent: 25,
+            stopLossMarketCapUsd: 9_000_000,
+            takeProfitMarketCapUsd: 26_000_000,
+            closedAt: "2026-09-01T12:00:00.000Z",
+            exitMarketCapUsd: 9_000_000,
+            exitReason: "stop-loss",
+            moonbagPercent: 0,
+          },
+          status: "closed",
+        },
+        {
+          id: "baseline-test:0x00000000000000000000000000000000000000aa:7000000",
+          tradeSetupId: "baseline-test:0x00000000000000000000000000000000000000aa",
+          strategyVersionId: "baseline-test",
+          openedAt: new Date("2026-09-01T12:00:00.000Z"),
+          entry: {
+            marketCapUsd: 7_000_000,
+            allocationPercent: 25,
+            stopLossMarketCapUsd: 5_000_000,
+            takeProfitMarketCapUsd: 14_000_000,
+            moonbagPercent: 0,
+          },
+          status: "open",
+        },
+      ]);
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("marks take-profit fills as moonbags when the stop loss was not reached first", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const storage = initializeSimulationStorage({ databasePath });
+
+    try {
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000bb",
+        capturedAt: new Date("2026-09-02T10:00:00.000Z"),
+        blockNumber: 200n,
+        metrics: {
+          marketCapUsd: 14_000_000,
+          athMarketCapUsd: 20_000_000,
+          athCapturedAt: "2026-09-01T10:00:00.000Z",
+          pairAgeHours: 120,
+          liquidityUsd: 300_000,
+          oneHourVolumeUsd: 150_000,
+        },
+      });
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000bb",
+        capturedAt: new Date("2026-09-02T11:00:00.000Z"),
+        blockNumber: 201n,
+        metrics: { lowMarketCapUsd: 13_000_000, highMarketCapUsd: 13_500_000 },
+      });
+      storage.saveMarketSnapshot({
+        pair: "0x00000000000000000000000000000000000000bb",
+        capturedAt: new Date("2026-09-02T12:00:00.000Z"),
+        blockNumber: 202n,
+        metrics: { lowMarketCapUsd: 12_000_000, highMarketCapUsd: 27_000_000 },
+      });
+
+      expect(storage.simulateTradeSetups(strategy)).toMatchObject({
+        tradeSetupsCreated: 1,
+        positionsOpened: 1,
+        positionsClosed: 1,
+      });
+      expect(storage.getResumeState().simulatedPositions).toEqual([
+        {
+          id: "baseline-test:0x00000000000000000000000000000000000000bb:13000000",
+          tradeSetupId: "baseline-test:0x00000000000000000000000000000000000000bb",
+          strategyVersionId: "baseline-test",
+          openedAt: new Date("2026-09-02T11:00:00.000Z"),
+          entry: {
+            marketCapUsd: 13_000_000,
+            allocationPercent: 25,
+            stopLossMarketCapUsd: 9_000_000,
+            takeProfitMarketCapUsd: 26_000_000,
+            closedAt: "2026-09-02T12:00:00.000Z",
+            exitMarketCapUsd: 26_000_000,
+            exitReason: "take-profit",
+            moonbagPercent: 50,
+          },
+          status: "moonbag",
+        },
       ]);
     } finally {
       storage.close();
