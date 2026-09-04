@@ -72,6 +72,7 @@ export async function fetchV3Swaps(args: {
           token1: tokens.token1,
           amount0: log.args.amount0,
           amount1: log.args.amount1,
+          sqrtPriceX96: log.args.sqrtPriceX96,
           transactionFrom: getAddress(transaction.from),
         });
       }

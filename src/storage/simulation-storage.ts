@@ -117,6 +117,13 @@ export type ManualReplayPairImportResult = {
   updated: number;
 };
 
+export type HistoricalReplayProgressRecord = {
+  pair: string;
+  fromBlock: bigint;
+  toBlock: bigint;
+  updatedAt: Date;
+};
+
 export type ResumeState = {
   strategyVersions: StrategyVersionRecord[];
   scanHealth: ScanHealthRecord[];
@@ -222,6 +229,13 @@ type ManualReplayPairRow = {
   label: ManualReplayPairLabel;
   notes: string | null;
   ran_at: string;
+};
+
+type HistoricalReplayProgressRow = {
+  pair: string;
+  from_block: string;
+  to_block: string;
+  updated_at: string;
 };
 
 export function resolveSimulationDatabasePath(options: SimulationStorageOptions = {}) {
@@ -343,6 +357,31 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           blockNumber: record.blockNumber.toString(),
           metricsJson: JSON.stringify(record.metrics),
         });
+    },
+
+    saveHistoricalReplayProgress(record: HistoricalReplayProgressRecord) {
+      database
+        .prepare(
+          `INSERT INTO historical_replay_progress (pair, from_block, to_block, updated_at)
+           VALUES (@pair, @fromBlock, @toBlock, @updatedAt)
+           ON CONFLICT(pair) DO UPDATE SET
+             from_block = excluded.from_block,
+             to_block = excluded.to_block,
+             updated_at = excluded.updated_at`,
+        )
+        .run({
+          pair: record.pair,
+          fromBlock: record.fromBlock.toString(),
+          toBlock: record.toBlock.toString(),
+          updatedAt: toUtc(record.updatedAt),
+        });
+    },
+
+    getHistoricalReplayProgress(pair: string): HistoricalReplayProgressRecord | undefined {
+      const row = database
+        .prepare("SELECT * FROM historical_replay_progress WHERE pair = @pair")
+        .get({ pair }) as HistoricalReplayProgressRow | undefined;
+      return row ? toHistoricalReplayProgressRecord(row) : undefined;
     },
 
     saveInterestingWallet(record: InterestingWalletRecord) {
@@ -977,6 +1016,13 @@ CREATE TABLE IF NOT EXISTS manual_replay_pairs (
   ran_at TEXT NOT NULL,
   imported_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS historical_replay_progress (
+  pair TEXT PRIMARY KEY,
+  from_block TEXT NOT NULL,
+  to_block TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 function toUtc(value: Date) {
@@ -1123,5 +1169,16 @@ function toManualReplayPairRecord(row: ManualReplayPairRow): ManualReplayPairRec
     label: row.label,
     notes: row.notes ?? undefined,
     ranAt: new Date(row.ran_at),
+  };
+}
+
+function toHistoricalReplayProgressRecord(
+  row: HistoricalReplayProgressRow,
+): HistoricalReplayProgressRecord {
+  return {
+    pair: row.pair,
+    fromBlock: BigInt(row.from_block),
+    toBlock: BigInt(row.to_block),
+    updatedAt: new Date(row.updated_at),
   };
 }

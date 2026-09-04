@@ -35,6 +35,7 @@ export type DecodedV3Swap = {
   token1: Address;
   amount0: bigint;
   amount1: bigint;
+  sqrtPriceX96?: bigint;
   transactionFrom: Address;
 };
 

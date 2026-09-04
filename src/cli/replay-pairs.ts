@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 
 import { getAddress } from "viem";
 
+import { reconstructReplaySnapshots } from "../analysis/replay-snapshots.js";
 import { loadConfig } from "../config/env.js";
+import { fetchV3Swaps } from "../dex/v3/swaps.js";
 import { generateSimulationReports } from "../reports/simulation-reports.js";
 import {
   initializeSimulationStorage,
@@ -11,6 +13,7 @@ import {
   type ManualReplayPairLabel,
   type ManualReplayPairRecord,
 } from "../storage/simulation-storage.js";
+import type { DecodedV3Swap, DiscoveredPool } from "../types/evm.js";
 
 type ReplayPairsCommandOptions = {
   databasePath?: string;
@@ -18,6 +21,12 @@ type ReplayPairsCommandOptions = {
   reportsDirectory?: string;
   generatedAt?: Date;
   writeLine?: (line: string) => void;
+  fetchReplaySwaps?: (args: {
+    pools: DiscoveredPool[];
+    fromBlock: bigint;
+    toBlock: bigint;
+    chunkSize: bigint;
+  }) => Promise<DecodedV3Swap[]>;
 };
 
 const labels = new Set<ManualReplayPairLabel>(["runner", "failed", "unknown"]);
@@ -87,7 +96,111 @@ export async function runReplayPairsCommand(
     return;
   }
 
-  throw new Error("Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report>");
+  if (command === "reconstruct") {
+    const fromBlock = readBigIntFlag(args, "--from-block");
+    const toBlock = readBigIntFlag(args, "--to-block");
+    const resolutionMinutes = readIntegerFlag(args, "--resolution-minutes") ?? 15;
+    const chunkSize = readBigIntFlag(args, "--chunk-size") ?? 100n;
+    if (fromBlock === undefined || toBlock === undefined) {
+      throw new Error(
+        "Usage: npm run replay-pairs -- reconstruct --from-block 1 --to-block 2 [--resolution-minutes 15] [--chunk-size 100]",
+      );
+    }
+
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      let snapshotsStored = 0;
+      let skippedPairs = 0;
+
+      for (const replayPair of storage.listManualReplayPairs()) {
+        if (!replayPair.pairAddress) {
+          storage.saveSkippedPairSummary({
+            id: `historical-replay:${replayPair.tokenAddress}:missing-pair-address`,
+            scanner: "historical-replay",
+            pair: replayPair.tokenAddress,
+            scannedAt: new Date(),
+            reason: "missing-pair-address",
+            details: { symbol: replayPair.symbol, label: replayPair.label },
+          });
+          skippedPairs += 1;
+          continue;
+        }
+
+        const pairAddress = getAddress(replayPair.pairAddress);
+        const progress = storage.getHistoricalReplayProgress(pairAddress);
+        const replayFromBlock =
+          progress && progress.toBlock >= fromBlock ? progress.toBlock + 1n : fromBlock;
+        if (replayFromBlock > toBlock) {
+          continue;
+        }
+
+        const pools: DiscoveredPool[] = [
+          {
+            token: getAddress(replayPair.tokenAddress),
+            quoteToken: "0x0000000000000000000000000000000000000000",
+            fee: 0,
+            pool: pairAddress,
+          },
+        ];
+        const swaps = await fetchReplaySwaps(options, {
+          pools,
+          fromBlock: replayFromBlock,
+          toBlock,
+          chunkSize,
+        });
+        const snapshots = reconstructReplaySnapshots({
+          pair: {
+            tokenAddress: replayPair.tokenAddress,
+            pairAddress,
+            symbol: replayPair.symbol,
+            ranAt: replayPair.ranAt,
+          },
+          swaps,
+          resolution: { minutes: resolutionMinutes },
+        });
+
+        for (const snapshot of snapshots) {
+          storage.saveMarketSnapshot(snapshot);
+          snapshotsStored += 1;
+        }
+        if (snapshots.some((snapshot) => snapshot.metrics.confidence === "low")) {
+          storage.saveSkippedPairSummary({
+            id: `historical-replay:${pairAddress}:low-confidence-reconstruction`,
+            scanner: "historical-replay",
+            pair: pairAddress,
+            scannedAt: new Date(),
+            reason: "low-confidence-reconstruction",
+            details: {
+              lowConfidenceSnapshots: snapshots.filter(
+                (snapshot) => snapshot.metrics.confidence === "low",
+              ).length,
+            },
+          });
+        }
+        storage.saveHistoricalReplayProgress({
+          pair: pairAddress,
+          fromBlock,
+          toBlock,
+          updatedAt: new Date(),
+        });
+      }
+
+      writeLine(
+        `Reconstructed ${snapshotsStored} historical replay snapshot(s), skipped ${skippedPairs} manual replay pair(s).`,
+      );
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
+  throw new Error(
+    "Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report | reconstruct>",
+  );
 }
 
 export function parseManualReplayPairsCsv(csv: string): ManualReplayPairImport[] {
@@ -250,6 +363,36 @@ function formatEuropeParisDateTime(date: Date) {
 function readFlag(args: string[], flag: string) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+function readBigIntFlag(args: string[], flag: string) {
+  const value = readFlag(args, flag);
+  return value === undefined ? undefined : BigInt(value);
+}
+
+function readIntegerFlag(args: string[], flag: string) {
+  const value = readFlag(args, flag);
+  return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+async function fetchReplaySwaps(
+  options: ReplayPairsCommandOptions,
+  args: {
+    pools: DiscoveredPool[];
+    fromBlock: bigint;
+    toBlock: bigint;
+    chunkSize: bigint;
+  },
+) {
+  if (options.fetchReplaySwaps) {
+    return options.fetchReplaySwaps(args);
+  }
+  const config = loadConfig();
+  const { createRobinhoodClient } = await import("../rpc/client.js");
+  return fetchV3Swaps({
+    client: createRobinhoodClient(config.rpcUrl, config.rpcTimeoutMs),
+    ...args,
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

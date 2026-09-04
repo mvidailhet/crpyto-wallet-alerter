@@ -16,20 +16,14 @@ describe("Europe/Paris date parsing", () => {
   });
 
   it("interprets date-time inputs as Europe/Paris wall-clock time", () => {
-    const window = parseEuropeParisDateWindow(
-      "2026-09-01T14:01:00",
-      "2026-09-01T14:02:00",
-    );
+    const window = parseEuropeParisDateWindow("2026-09-01T14:01:00", "2026-09-01T14:02:00");
 
     expect(window.from.toISOString()).toBe("2026-09-01T12:01:00.000Z");
     expect(window.to.toISOString()).toBe("2026-09-01T12:02:00.000Z");
   });
 
   it("uses the winter Europe/Paris offset when applicable", () => {
-    const window = parseEuropeParisDateWindow(
-      "2026-01-01T14:01:00",
-      "2026-01-01T14:02:00",
-    );
+    const window = parseEuropeParisDateWindow("2026-01-01T14:01:00", "2026-01-01T14:02:00");
 
     expect(window.from.toISOString()).toBe("2026-01-01T13:01:00.000Z");
     expect(window.to.toISOString()).toBe("2026-01-01T13:02:00.000Z");
