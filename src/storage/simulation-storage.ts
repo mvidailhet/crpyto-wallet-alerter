@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getAddress } from "viem";
 
 type JsonObject = Record<string, unknown>;
 
@@ -77,6 +78,24 @@ export type AlertHistoryRecord = {
   sentAt: Date;
   channel: string;
   payload: JsonObject;
+};
+
+export type ManualReplayPairLabel = "runner" | "failed" | "unknown";
+
+export type ManualReplayPairImport = {
+  tokenAddress: string;
+  pairAddress?: string;
+  symbol?: string;
+  label: ManualReplayPairLabel;
+  notes?: string;
+  ranAt: Date;
+};
+
+export type ManualReplayPairRecord = ManualReplayPairImport;
+
+export type ManualReplayPairImportResult = {
+  inserted: number;
+  updated: number;
 };
 
 export type ResumeState = {
@@ -159,6 +178,16 @@ type AlertHistoryRow = {
   sent_at: string;
   channel: string;
   payload_json: string;
+};
+
+type ManualReplayPairRow = {
+  id: string;
+  token_address: string;
+  pair_address: string | null;
+  symbol: string | null;
+  label: ManualReplayPairLabel;
+  notes: string | null;
+  ran_at: string;
 };
 
 export function resolveSimulationDatabasePath(options: SimulationStorageOptions = {}) {
@@ -372,6 +401,51 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
         });
     },
 
+    importManualReplayPairs(records: ManualReplayPairImport[]): ManualReplayPairImportResult {
+      const findExisting = database.prepare("SELECT id FROM manual_replay_pairs WHERE id = @id");
+      const saveReplayPair = database.prepare(
+        `INSERT INTO manual_replay_pairs (
+           id, token_address, pair_address, symbol, label, notes, ran_at, imported_at
+         )
+         VALUES (
+           @id, @tokenAddress, @pairAddress, @symbol, @label, @notes, @ranAt,
+           strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         )
+         ON CONFLICT(id) DO UPDATE SET
+           token_address = excluded.token_address,
+           pair_address = excluded.pair_address,
+           symbol = excluded.symbol,
+           label = excluded.label,
+           notes = excluded.notes,
+           ran_at = excluded.ran_at,
+           imported_at = excluded.imported_at`,
+      );
+
+      const result = { inserted: 0, updated: 0 };
+      const importRecords = database.transaction((nestedRecords: ManualReplayPairImport[]) => {
+        for (const record of nestedRecords) {
+          const normalized = normalizeManualReplayPair(record);
+          const exists = findExisting.get({ id: normalized.id }) !== undefined;
+          saveReplayPair.run(normalized);
+          if (exists) {
+            result.updated += 1;
+          } else {
+            result.inserted += 1;
+          }
+        }
+      });
+
+      importRecords(records);
+      return result;
+    },
+
+    listManualReplayPairs(): ManualReplayPairRecord[] {
+      return database
+        .prepare("SELECT * FROM manual_replay_pairs ORDER BY ran_at, token_address, id")
+        .all()
+        .map((row) => toManualReplayPairRecord(row as ManualReplayPairRow));
+    },
+
     getResumeState(): ResumeState {
       return {
         strategyVersions: database
@@ -486,6 +560,17 @@ CREATE TABLE IF NOT EXISTS alert_history (
   channel TEXT NOT NULL,
   payload_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS manual_replay_pairs (
+  id TEXT PRIMARY KEY,
+  token_address TEXT NOT NULL,
+  pair_address TEXT,
+  symbol TEXT,
+  label TEXT NOT NULL CHECK (label IN ('runner', 'failed', 'unknown')),
+  notes TEXT,
+  ran_at TEXT NOT NULL,
+  imported_at TEXT NOT NULL
+);
 `;
 
 function toUtc(value: Date) {
@@ -581,5 +666,44 @@ function toAlertHistoryRecord(row: AlertHistoryRow): AlertHistoryRecord {
     sentAt: new Date(row.sent_at),
     channel: row.channel,
     payload: parseJson<JsonObject>(row.payload_json),
+  };
+}
+
+function normalizeManualReplayPair(record: ManualReplayPairImport) {
+  const tokenAddress = getAddress(record.tokenAddress);
+  const pairAddress = record.pairAddress ? getAddress(record.pairAddress) : undefined;
+
+  if (!["runner", "failed", "unknown"].includes(record.label)) {
+    throw new Error(`Unsupported manual replay pair label: ${record.label}`);
+  }
+
+  if (Number.isNaN(record.ranAt.getTime())) {
+    throw new Error(`Invalid manual replay pair ranAt for ${tokenAddress}`);
+  }
+
+  return {
+    id: `${tokenAddress}:${pairAddress ?? ""}`,
+    tokenAddress,
+    pairAddress: pairAddress ?? null,
+    symbol: optionalText(record.symbol),
+    label: record.label,
+    notes: optionalText(record.notes),
+    ranAt: toUtc(record.ranAt),
+  };
+}
+
+function optionalText(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function toManualReplayPairRecord(row: ManualReplayPairRow): ManualReplayPairRecord {
+  return {
+    tokenAddress: row.token_address,
+    pairAddress: row.pair_address ?? undefined,
+    symbol: row.symbol ?? undefined,
+    label: row.label,
+    notes: row.notes ?? undefined,
+    ranAt: new Date(row.ran_at),
   };
 }

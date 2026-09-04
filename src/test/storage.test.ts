@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   initializeSimulationStorage,
   resolveSimulationDatabasePath,
+  type ManualReplayPairImport,
 } from "../storage/simulation-storage.js";
 
 const tempDirs: string[] = [];
@@ -40,6 +41,7 @@ describe("simulation storage initialization", () => {
       expect(storage.listTables()).toEqual([
         "alert_history",
         "interesting_wallets",
+        "manual_replay_pairs",
         "market_snapshots",
         "scan_gaps",
         "scan_health",
@@ -210,6 +212,65 @@ describe("simulation storage initialization", () => {
       });
     } finally {
       reopenedStorage.close();
+    }
+  });
+
+  it("imports validated manual replay pairs and updates duplicate rows predictably", async () => {
+    const dataDirectory = await createTempDir();
+    const databasePath = join(dataDirectory, "simulation.sqlite");
+    const storage = initializeSimulationStorage({ databasePath });
+
+    const initialRows: ManualReplayPairImport[] = [
+      {
+        tokenAddress: "0x00000000000000000000000000000000000000aa",
+        pairAddress: "0x00000000000000000000000000000000000000bb",
+        symbol: "RUN",
+        label: "runner",
+        notes: "initial runner note",
+        ranAt: new Date("2026-08-15T12:00:00.000Z"),
+      },
+      {
+        tokenAddress: "0x00000000000000000000000000000000000000cc",
+        label: "failed",
+        ranAt: new Date("2026-08-16T12:00:00.000Z"),
+      },
+    ];
+
+    try {
+      expect(storage.importManualReplayPairs(initialRows)).toEqual({ inserted: 2, updated: 0 });
+      expect(
+        storage.importManualReplayPairs([
+          {
+            tokenAddress: "0x00000000000000000000000000000000000000AA",
+            pairAddress: "0x00000000000000000000000000000000000000BB",
+            symbol: "RUN2",
+            label: "unknown",
+            notes: "corrected note",
+            ranAt: new Date("2026-08-17T12:00:00.000Z"),
+          },
+        ]),
+      ).toEqual({ inserted: 0, updated: 1 });
+
+      expect(storage.listManualReplayPairs()).toEqual([
+        {
+          tokenAddress: "0x00000000000000000000000000000000000000cc",
+          pairAddress: undefined,
+          symbol: undefined,
+          label: "failed",
+          notes: undefined,
+          ranAt: new Date("2026-08-16T12:00:00.000Z"),
+        },
+        {
+          tokenAddress: "0x00000000000000000000000000000000000000AA",
+          pairAddress: "0x00000000000000000000000000000000000000bb",
+          symbol: "RUN2",
+          label: "unknown",
+          notes: "corrected note",
+          ranAt: new Date("2026-08-17T12:00:00.000Z"),
+        },
+      ]);
+    } finally {
+      storage.close();
     }
   });
 });
