@@ -32,6 +32,8 @@ export type TradeSetupRanking = {
 
 const walletBoostPerWallet = 10;
 
+// Matches wallets and pairs by address only, not by chain: TradeSetupRecord
+// has no chain field to join on, and WalletChain has a single value today.
 export function rankTradeSetups(input: TradeSetupRankingInput): TradeSetupRanking[] {
   const ignoredWallets = new Set(
     input.walletTags.filter((tag) => tag.tag === "ignored").map((tag) => tag.wallet),

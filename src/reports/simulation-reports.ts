@@ -450,20 +450,18 @@ function renderReplayAnalysisTable(rows: ReplayAnalysisRow[]) {
 }
 
 function renderSetupTable(tradeSetups: TradeSetupRecord[], rankings: TradeSetupRanking[]) {
-  const rankingById = new Map(rankings.map((ranking) => [ranking.tradeSetupId, ranking]));
-  const orderedSetups = [...tradeSetups].sort(
-    (left, right) =>
-      (rankingById.get(right.id)?.score ?? 0) - (rankingById.get(left.id)?.score ?? 0) ||
-      left.id.localeCompare(right.id),
-  );
+  const setupsById = new Map(tradeSetups.map((setup) => [setup.id, setup]));
 
+  // rankTradeSetups(state) is always called with this same tradeSetups list,
+  // so it returns exactly one ranking per setup, already ordered highest
+  // score first; render in that order rather than re-deriving it here.
   return `<h2>Trade setups</h2>
   <table>
     <thead><tr><th>Strategy version</th><th>Trade setup</th><th>Pair</th><th>Created</th><th>Planned buy levels</th><th>Wallet boost</th><th>Ranking explanation</th></tr></thead>
-    <tbody>${orderedSetups
-      .map((setup) => {
-        const ranking = rankingById.get(setup.id);
-        return `<tr><td>${escapeHtml(setup.strategyVersionId)}</td><td>${escapeHtml(setup.id)}</td><td>${escapeHtml(setup.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(setup.createdAt))}</td><td>${escapeHtml(JSON.stringify(setup.plannedBuyLevels))}</td><td>${ranking?.walletBoost ?? 0}</td><td>${escapeHtml(ranking?.explanation ?? "No interesting-wallet evidence for this pair.")}</td></tr>`;
+    <tbody>${rankings
+      .map((ranking) => {
+        const setup = setupsById.get(ranking.tradeSetupId) as TradeSetupRecord;
+        return `<tr><td>${escapeHtml(setup.strategyVersionId)}</td><td>${escapeHtml(setup.id)}</td><td>${escapeHtml(setup.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(setup.createdAt))}</td><td>${escapeHtml(JSON.stringify(setup.plannedBuyLevels))}</td><td>${ranking.walletBoost}</td><td>${escapeHtml(ranking.explanation)}</td></tr>`;
       })
       .join("")}</tbody>
   </table>`;

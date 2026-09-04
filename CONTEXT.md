@@ -82,7 +82,7 @@ _Avoid_: Provider, API client
 
 **Trade Setup Ranking**:
 An ordering of trade setups by score, where an interesting-wallet boost can raise a setup's position without wallet evidence being required for the setup to exist.
-_Avoid_: Score, priority
+_Avoid_: Priority
 
 **Wallet Boost**:
 The ranking increase a trade setup receives when interesting wallets have evidence tied to its pair, explained alongside the ranking.
