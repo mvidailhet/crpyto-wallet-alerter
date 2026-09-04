@@ -49,11 +49,10 @@ function loadTelegramConfig(env: NodeJS.ProcessEnv): TelegramConfig | undefined 
   const botToken = env.TELEGRAM_BOT_TOKEN?.trim();
   const chatId = env.TELEGRAM_CHAT_ID?.trim();
 
-  if (!botToken && !chatId) {
-    return undefined;
-  }
+  // A partial configuration disables only the Telegram adapter; the monitor
+  // still scans, and `--require-alerts` is the opt-in that turns this fatal.
   if (!botToken || !chatId) {
-    throw new Error("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set together");
+    return undefined;
   }
 
   return { botToken, chatId };

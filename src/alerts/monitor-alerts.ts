@@ -1,7 +1,6 @@
-import type { AlertAdapter } from "./telegram-adapter.js";
+import type { AlertAdapter } from "./adapter.js";
 import type {
   AlertHistoryRecord,
-  DataSourceFailureRecord,
   ResumeState,
   SimulatedPositionRecord,
 } from "../storage/simulation-storage.js";
@@ -11,65 +10,63 @@ export type MonitorAlertKind =
 
 export type PlannedAlert = {
   id: string;
+  // Doubles as alert_history.trade_setup_id: the trade setup id for setup and
+  // position alerts, or a synthetic subject for adapter and summary alerts.
   subject: string;
   kind: MonitorAlertKind;
   text: string;
-  payload: Record<string, unknown>;
 };
 
 export type PlanMonitorAlertsOptions = {
   now: Date;
-  repeatedFailureThreshold?: number;
-  repeatedFailureCooldownMinutes?: number;
 };
 
-const defaultRepeatedFailureThreshold = 3;
-const defaultRepeatedFailureCooldownMinutes = 60;
+// Fixed by ADR-0020: a repeated-failure alert fires once an adapter has failed
+// this many consecutive scans. Event alerts older than the lookback window are
+// treated as backlog and skipped so enabling alerts on a running monitor does
+// not replay the whole history.
+const repeatedFailureThreshold = 3;
+const eventAlertLookbackHours = 24;
 
 export function planMonitorAlerts(
   state: ResumeState,
   options: PlanMonitorAlertsOptions,
 ): PlannedAlert[] {
-  const threshold = options.repeatedFailureThreshold ?? defaultRepeatedFailureThreshold;
-  const cooldownMs =
-    (options.repeatedFailureCooldownMinutes ?? defaultRepeatedFailureCooldownMinutes) * 60_000;
   const pairBySetupId = new Map(state.tradeSetups.map((setup) => [setup.id, setup.pair]));
   const alerts: PlannedAlert[] = [];
 
   for (const setup of state.tradeSetups) {
+    if (!isRecentEvent(setup.createdAt, options.now)) {
+      continue;
+    }
     alerts.push({
       id: `trade-setup:${setup.id}`,
       subject: setup.id,
       kind: "trade-setup",
       text: `New trade setup ${setup.id} on pair ${setup.pair}.`,
-      payload: {
-        tradeSetupId: setup.id,
-        pair: setup.pair,
-        createdAt: setup.createdAt.toISOString(),
-        trigger: setup.trigger,
-      },
     });
   }
 
   for (const position of state.simulatedPositions) {
     const pair = pairBySetupId.get(position.tradeSetupId) ?? "";
-    const entryMarketCapUsd = numberEntry(position, "marketCapUsd");
-    alerts.push({
-      id: `fill:${position.id}`,
-      subject: position.tradeSetupId,
-      kind: "fill",
-      text: `Simulated fill ${position.id} on pair ${pair} at market cap ${formatUsd(entryMarketCapUsd)}.`,
-      payload: {
-        tradeSetupId: position.tradeSetupId,
-        positionId: position.id,
-        pair,
-        openedAt: position.openedAt.toISOString(),
-        entryMarketCapUsd,
-      },
-    });
+    if (isRecentEvent(position.openedAt, options.now)) {
+      alerts.push({
+        id: `fill:${position.id}`,
+        subject: position.tradeSetupId,
+        kind: "fill",
+        text: `Simulated fill ${position.id} on pair ${pair} at market cap ${formatUsd(
+          numberEntry(position, "marketCapUsd"),
+        )}.`,
+      });
+    }
 
     const exitReason = stringEntry(position, "exitReason");
-    if (exitReason === "stop-loss" || exitReason === "take-profit") {
+    const closedAt = dateEntry(position, "closedAt");
+    if (
+      (exitReason === "stop-loss" || exitReason === "take-profit") &&
+      closedAt !== undefined &&
+      isRecentEvent(closedAt, options.now)
+    ) {
       alerts.push({
         id: `${exitReason}:${position.id}`,
         subject: position.tradeSetupId,
@@ -78,22 +75,15 @@ export function planMonitorAlerts(
           exitReason === "stop-loss"
             ? `Stop loss hit for ${position.id} on pair ${pair}.`
             : `Take profit (2x) reached for ${position.id} on pair ${pair}.`,
-        payload: {
-          tradeSetupId: position.tradeSetupId,
-          positionId: position.id,
-          pair,
-          exitMarketCapUsd: numberEntry(position, "exitMarketCapUsd"),
-          closedAt: stringEntry(position, "closedAt"),
-        },
       });
     }
   }
 
   for (const failure of state.dataSourceFailures) {
-    if (failure.recoveredAt !== undefined || failure.consecutiveFailures < threshold) {
-      continue;
-    }
-    if (recentlyAlerted(state.alertHistory, failure.adapter, options.now, cooldownMs)) {
+    if (
+      failure.recoveredAt !== undefined ||
+      failure.consecutiveFailures !== repeatedFailureThreshold
+    ) {
       continue;
     }
     alerts.push({
@@ -101,18 +91,11 @@ export function planMonitorAlerts(
       subject: `data-source:${failure.adapter}`,
       kind: "repeated-failure",
       text: `Adapter ${failure.adapter} has failed ${failure.consecutiveFailures} scans in a row: ${failure.error}`,
-      payload: {
-        adapter: failure.adapter,
-        scanner: failure.scanner,
-        consecutiveFailures: failure.consecutiveFailures,
-        failedAt: failure.failedAt.toISOString(),
-        error: failure.error,
-      },
     });
   }
 
   const summaryDate = previousParisDate(options.now);
-  const summary = summarizeParisDay(state, summaryDate, threshold);
+  const summary = summarizeParisDay(state, summaryDate);
   alerts.push({
     id: `daily-summary:${summaryDate}`,
     subject: "daily-summary",
@@ -120,8 +103,7 @@ export function planMonitorAlerts(
     text:
       `Daily summary ${summaryDate} (Europe/Paris): ${summary.tradeSetups} new trade setup(s), ` +
       `${summary.fills} fill(s), ${summary.stopLosses} stop loss(es), ` +
-      `${summary.takeProfits} take profit(s), ${summary.repeatedFailures} repeated failure(s).`,
-    payload: { date: summaryDate, ...summary },
+      `${summary.takeProfits} take profit(s), ${summary.dataSourceFailures} data-source failure(s).`,
   });
 
   return alerts;
@@ -132,7 +114,7 @@ export type DailyAlertSummary = {
   fills: number;
   stopLosses: number;
   takeProfits: number;
-  repeatedFailures: number;
+  dataSourceFailures: number;
 };
 
 export type AlertStorage = {
@@ -145,7 +127,7 @@ export type DispatchMonitorAlertsParams = {
   adapters: AlertAdapter[];
   now: Date;
   writeLine?: (line: string) => void;
-} & Pick<PlanMonitorAlertsOptions, "repeatedFailureThreshold" | "repeatedFailureCooldownMinutes">;
+};
 
 export async function dispatchMonitorAlerts(params: DispatchMonitorAlertsParams): Promise<number> {
   const { storage, adapters, now } = params;
@@ -155,11 +137,7 @@ export async function dispatchMonitorAlerts(params: DispatchMonitorAlertsParams)
 
   const state = storage.getResumeState();
   const alreadySent = new Set(state.alertHistory.map((record) => record.id));
-  const planned = planMonitorAlerts(state, {
-    now,
-    repeatedFailureThreshold: params.repeatedFailureThreshold,
-    repeatedFailureCooldownMinutes: params.repeatedFailureCooldownMinutes,
-  });
+  const planned = planMonitorAlerts(state, { now });
 
   let sent = 0;
   for (const alert of planned) {
@@ -170,7 +148,7 @@ export async function dispatchMonitorAlerts(params: DispatchMonitorAlertsParams)
       }
 
       try {
-        await adapter.send({ subject: alert.subject, text: alert.text });
+        await adapter.send(alert.text);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         params.writeLine?.(`Alert delivery failed (${adapter.channel}): ${message}`);
@@ -182,7 +160,7 @@ export async function dispatchMonitorAlerts(params: DispatchMonitorAlertsParams)
         tradeSetupId: alert.subject,
         sentAt: now,
         channel: adapter.channel,
-        payload: { kind: alert.kind, text: alert.text, ...alert.payload },
+        payload: { kind: alert.kind, text: alert.text },
       });
       alreadySent.add(id);
       sent += 1;
@@ -192,26 +170,13 @@ export async function dispatchMonitorAlerts(params: DispatchMonitorAlertsParams)
   return sent;
 }
 
-function recentlyAlerted(
-  alertHistory: AlertHistoryRecord[],
-  adapter: string,
-  now: Date,
-  cooldownMs: number,
-): boolean {
-  const prefix = `repeated-failure:${adapter}:`;
-  return alertHistory.some(
-    (record) =>
-      record.id.startsWith(prefix) && now.getTime() - record.sentAt.getTime() < cooldownMs,
-  );
-}
-
-function summarizeParisDay(state: ResumeState, date: string, threshold: number): DailyAlertSummary {
+function summarizeParisDay(state: ResumeState, date: string): DailyAlertSummary {
   const closedOn = (position: SimulatedPositionRecord, reason: string) => {
     if (stringEntry(position, "exitReason") !== reason) {
       return false;
     }
-    const closedAt = stringEntry(position, "closedAt");
-    return closedAt !== undefined && parisDateString(new Date(closedAt)) === date;
+    const closedAt = dateEntry(position, "closedAt");
+    return closedAt !== undefined && parisDateString(closedAt) === date;
   };
 
   return {
@@ -224,11 +189,15 @@ function summarizeParisDay(state: ResumeState, date: string, threshold: number):
       .length,
     takeProfits: state.simulatedPositions.filter((position) => closedOn(position, "take-profit"))
       .length,
-    repeatedFailures: state.dataSourceFailures.filter(
-      (failure: DataSourceFailureRecord) =>
-        failure.consecutiveFailures >= threshold && parisDateString(failure.failedAt) === date,
+    dataSourceFailures: state.scanGaps.filter(
+      (gap) =>
+        gap.reason.startsWith("data-source-failure:") && parisDateString(gap.endedAt) === date,
     ).length,
   };
+}
+
+function isRecentEvent(at: Date, now: Date): boolean {
+  return now.getTime() - at.getTime() <= eventAlertLookbackHours * 60 * 60 * 1000;
 }
 
 function numberEntry(position: SimulatedPositionRecord, key: string): number | undefined {
@@ -239,6 +208,15 @@ function numberEntry(position: SimulatedPositionRecord, key: string): number | u
 function stringEntry(position: SimulatedPositionRecord, key: string): string | undefined {
   const value = position.entry[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function dateEntry(position: SimulatedPositionRecord, key: string): Date | undefined {
+  const value = stringEntry(position, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function formatUsd(value: number | undefined): string {

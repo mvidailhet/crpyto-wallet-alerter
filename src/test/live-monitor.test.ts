@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AlertAdapter } from "../alerts/telegram-adapter.js";
+import type { AlertAdapter } from "../alerts/adapter.js";
 import {
   runDexScreenerMonitorOnce,
   startDexScreenerMonitor,
@@ -210,9 +210,7 @@ describe("DEX Screener live monitor", () => {
       blockNumber: 123n,
     });
     expect(first.simulation.tradeSetupsCreated).toBe(1);
-    const setupAlerts = send.mock.calls.filter(([message]) =>
-      message.subject.startsWith("baseline-test:0x0000000000000000000000000000000000000001"),
-    );
+    const setupAlerts = send.mock.calls.filter(([text]) => text.startsWith("New trade setup "));
     expect(setupAlerts).toHaveLength(1);
     expect(first.alertsSent).toBe(send.mock.calls.length);
 
@@ -225,11 +223,7 @@ describe("DEX Screener live monitor", () => {
       capturedAt: new Date("2026-09-04T12:15:00.000Z"),
       blockNumber: 124n,
     });
-    expect(
-      send.mock.calls.filter(([message]) =>
-        message.subject.startsWith("baseline-test:0x0000000000000000000000000000000000000001"),
-      ),
-    ).toHaveLength(0);
+    expect(send.mock.calls.filter(([text]) => text.startsWith("New trade setup "))).toHaveLength(0);
   });
 
   it("runs immediately, survives scan failures, and then scans every configured interval until stopped", async () => {

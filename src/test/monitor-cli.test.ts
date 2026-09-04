@@ -34,14 +34,7 @@ describe("monitor command", () => {
     const start = vi.fn().mockReturnValue({ stop: vi.fn() });
     const writeLine = vi.fn();
 
-    await runMonitorCommand({
-      args: [],
-      config: config(),
-      strategy,
-      start,
-      writeLine,
-      registerShutdown: false,
-    });
+    await runMonitorCommand({ args: [], config: config(), strategy, start, writeLine });
 
     expect(start).toHaveBeenCalledTimes(1);
     expect(start.mock.calls[0][0].alertAdapters).toEqual([]);
@@ -57,7 +50,6 @@ describe("monitor command", () => {
       strategy,
       start,
       writeLine: vi.fn(),
-      registerShutdown: false,
     });
 
     expect(
@@ -73,7 +65,6 @@ describe("monitor command", () => {
         strategy,
         start: vi.fn(),
         writeLine: vi.fn(),
-        registerShutdown: false,
       }),
     ).rejects.toThrow("No alert adapter is configured");
   });

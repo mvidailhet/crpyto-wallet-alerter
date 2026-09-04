@@ -68,7 +68,7 @@ TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 TELEGRAM_CHAT_ID=-1001234567890
 ```
 
-When enabled, the monitor sends one Telegram message for each new trade setup, simulated fill, stop loss, 2x take profit, repeated data-source failure (after three consecutive failed scans, at most once per hour), and a daily summary for the previous Europe/Paris day. Sent alerts are recorded in the `alert_history` table, so repeated scans and restarts never resend the same alert.
+When enabled, the monitor sends one Telegram message for each new trade setup, simulated fill, stop loss, 2x take profit, repeated data-source failure (once per outage, when an adapter has failed three consecutive scans), and a daily summary for the previous Europe/Paris day. Sent alerts are recorded in the `alert_history` table, so repeated scans and restarts never resend the same alert, and events older than 24 hours are treated as backlog and skipped when alerts are first enabled on a running monitor.
 
 Pass `--require-alerts` to make the monitor fail fast when no alert adapter is configured:
 

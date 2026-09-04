@@ -10,7 +10,6 @@ export type RunMonitorCommandOptions = {
   strategy?: StrategyConfig;
   start?: typeof startDexScreenerMonitor;
   writeLine?: (line: string) => void;
-  registerShutdown?: boolean;
 };
 
 export async function runMonitorCommand(options: RunMonitorCommandOptions = {}) {
@@ -28,29 +27,27 @@ export async function runMonitorCommand(options: RunMonitorCommandOptions = {}) 
       : `Alerts enabled: ${alertAdapters.map((adapter) => adapter.channel).join(", ")}.`,
   );
 
-  const monitor = start({
+  return start({
     databasePath: config.simulationDatabasePath,
     dataDirectory: config.simulationDataDirectory,
     strategy,
     alertAdapters,
     writeLine,
   });
-
-  if (options.registerShutdown ?? true) {
-    for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.once(signal, () => {
-        monitor.stop();
-        process.exitCode = 0;
-      });
-    }
-  }
-
-  return monitor;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runMonitorCommand().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  });
+  runMonitorCommand()
+    .then((monitor) => {
+      for (const signal of ["SIGINT", "SIGTERM"] as const) {
+        process.once(signal, () => {
+          monitor.stop();
+          process.exitCode = 0;
+        });
+      }
+    })
+    .catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    });
 }

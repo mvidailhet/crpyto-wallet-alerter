@@ -13,7 +13,7 @@ describe("Telegram alert adapter", () => {
       fetchImpl,
     });
 
-    await adapter.send({ subject: "trade-setup:x", text: "New trade setup x" });
+    await adapter.send("New trade setup x");
 
     expect(adapter.channel).toBe("telegram");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -37,9 +37,7 @@ describe("Telegram alert adapter", () => {
       fetchImpl,
     });
 
-    await expect(adapter.send({ subject: "s", text: "t" })).rejects.toThrow(
-      "Telegram sendMessage failed with HTTP 429",
-    );
+    await expect(adapter.send("t")).rejects.toThrow("Telegram sendMessage failed with HTTP 429");
   });
 
   it("resolves no adapters when Telegram is unconfigured", () => {

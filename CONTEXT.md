@@ -52,6 +52,10 @@ _Avoid_: Filtered coin
 A paper-traded entry opened when a trade setup reaches one of its planned buy levels.
 _Avoid_: Real position, order
 
+**Fill**:
+The moment a simulated position is opened because a trade setup reached one of its planned buy levels.
+_Avoid_: Execution, order fill
+
 **Stop Loss**:
 The simulated exit level where a simulated position is closed after a fixed loss from its entry.
 _Avoid_: Risk limit

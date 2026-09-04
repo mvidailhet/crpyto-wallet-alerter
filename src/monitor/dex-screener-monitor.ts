@@ -1,5 +1,5 @@
+import type { AlertAdapter } from "../alerts/adapter.js";
 import { dispatchMonitorAlerts } from "../alerts/monitor-alerts.js";
-import type { AlertAdapter } from "../alerts/telegram-adapter.js";
 import { initializeSimulationStorage } from "../storage/simulation-storage.js";
 import type { SimulateTradeSetupsResult } from "../storage/simulation-storage.js";
 import type { StrategyConfig } from "../strategies/configs.js";
@@ -87,7 +87,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
         lastScannedBlock: blockNumber,
         status: `backoff:${adapter}`,
       });
-      return await finalizeScan(storage, options, capturedAt, {
+      return await dispatchAlertsForScan(storage, options, capturedAt, {
         snapshotsStored: 0,
         skippedPairs: 0,
         dataSourceFailuresRecorded: 0,
@@ -128,7 +128,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
         lastScannedBlock: blockNumber,
         status: `failed:${adapter}`,
       });
-      return await finalizeScan(storage, options, capturedAt, {
+      return await dispatchAlertsForScan(storage, options, capturedAt, {
         snapshotsStored: 0,
         skippedPairs: 0,
         dataSourceFailuresRecorded: 1,
@@ -172,7 +172,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
       status: "ok",
     });
 
-    return await finalizeScan(storage, options, capturedAt, {
+    return await dispatchAlertsForScan(storage, options, capturedAt, {
       snapshotsStored: pairs.length,
       skippedPairs,
       dataSourceFailuresRecorded: 0,
@@ -184,7 +184,7 @@ export async function runDexScreenerMonitorOnce(options: RunDexScreenerMonitorOn
   }
 }
 
-async function finalizeScan(
+async function dispatchAlertsForScan(
   storage: ReturnType<typeof initializeSimulationStorage>,
   options: RunDexScreenerMonitorOnceOptions,
   capturedAt: Date,

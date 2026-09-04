@@ -31,12 +31,8 @@ describe("application config", () => {
     });
   });
 
-  it("rejects a partial Telegram configuration", () => {
-    expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "123456:abc" })).toThrow(
-      "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set together",
-    );
-    expect(() => loadConfig({ TELEGRAM_CHAT_ID: "-1001234567890" })).toThrow(
-      "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set together",
-    );
+  it("ignores a partial Telegram configuration instead of aborting other commands", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "123456:abc" }).telegram).toBeUndefined();
+    expect(loadConfig({ TELEGRAM_CHAT_ID: "-1001234567890" }).telegram).toBeUndefined();
   });
 });

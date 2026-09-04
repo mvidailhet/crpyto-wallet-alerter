@@ -1,14 +1,5 @@
+import type { AlertAdapter } from "./adapter.js";
 import type { TelegramConfig } from "../config/env.js";
-
-export type AlertMessage = {
-  subject: string;
-  text: string;
-};
-
-export type AlertAdapter = {
-  readonly channel: string;
-  send(message: AlertMessage): Promise<void>;
-};
 
 export type CreateTelegramAdapterOptions = TelegramConfig & {
   fetchImpl?: typeof fetch;
@@ -20,13 +11,13 @@ export function createTelegramAdapter(options: CreateTelegramAdapterOptions): Al
 
   return {
     channel: "telegram",
-    async send(message: AlertMessage) {
+    async send(text: string) {
       const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chat_id: options.chatId,
-          text: message.text,
+          text,
           disable_web_page_preview: true,
         }),
       });

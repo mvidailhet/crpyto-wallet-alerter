@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AlertAdapter } from "../alerts/telegram-adapter.js";
+import type { AlertAdapter } from "../alerts/adapter.js";
 import { dispatchMonitorAlerts, planMonitorAlerts } from "../alerts/monitor-alerts.js";
 import { initializeSimulationStorage } from "../storage/simulation-storage.js";
 import type { ResumeState } from "../storage/simulation-storage.js";
@@ -40,7 +40,7 @@ function emptyState(): ResumeState {
 const now = new Date("2026-09-05T09:00:00.000Z");
 
 describe("planMonitorAlerts", () => {
-  it("plans an alert for each new trade setup, fill, stop-loss, and take-profit", () => {
+  it("plans an alert for each recent trade setup, fill, stop-loss, and take-profit", () => {
     const state = emptyState();
     state.tradeSetups = [
       {
@@ -85,71 +85,56 @@ describe("planMonitorAlerts", () => {
     );
   });
 
-  it("plans a repeated-failure alert only for adapters failing at or above the threshold", () => {
+  it("skips backlog events older than the lookback window", () => {
     const state = emptyState();
-    state.dataSourceFailures = [
+    state.tradeSetups = [
       {
-        adapter: "dex-screener",
-        scanner: "dex-screener-monitor",
-        failedAt: new Date("2026-09-05T08:30:00.000Z"),
-        consecutiveFailures: 3,
-        nextRetryAt: new Date("2026-09-05T08:38:00.000Z"),
-        recoveredAt: undefined,
-        error: "rate limited",
-      },
-      {
-        adapter: "other",
-        scanner: "dex-screener-monitor",
-        failedAt: new Date("2026-09-05T08:30:00.000Z"),
-        consecutiveFailures: 1,
-        nextRetryAt: new Date("2026-09-05T08:32:00.000Z"),
-        recoveredAt: undefined,
-        error: "blip",
+        id: "baseline:0xold",
+        strategyVersionId: "baseline",
+        pair: "0xold",
+        createdAt: new Date("2026-09-01T09:00:00.000Z"),
+        plannedBuyLevels: [],
+        trigger: {},
       },
     ];
 
-    const failureAlerts = planMonitorAlerts(state, { now }).filter(
-      (alert) => alert.kind === "repeated-failure",
-    );
-    expect(failureAlerts).toHaveLength(1);
-    expect(failureAlerts[0]?.subject).toBe("data-source:dex-screener");
+    const kinds = planMonitorAlerts(state, { now }).map((alert) => alert.kind);
+    expect(kinds).not.toContain("trade-setup");
   });
 
-  it("suppresses a repeated-failure alert that was already sent within the cooldown window", () => {
+  it("plans a repeated-failure alert only when an adapter reaches the failure threshold", () => {
     const state = emptyState();
     state.dataSourceFailures = [
-      {
-        adapter: "dex-screener",
-        scanner: "dex-screener-monitor",
-        failedAt: new Date("2026-09-05T08:30:00.000Z"),
-        consecutiveFailures: 4,
-        nextRetryAt: new Date("2026-09-05T08:46:00.000Z"),
-        recoveredAt: undefined,
-        error: "rate limited",
-      },
-    ];
-    state.alertHistory = [
-      {
-        id: "repeated-failure:dex-screener:2026-09-05T08:20:00.000Z:telegram",
-        tradeSetupId: "data-source:dex-screener",
-        sentAt: new Date("2026-09-05T08:20:00.000Z"),
-        channel: "telegram",
-        payload: {},
-      },
+      failure({ adapter: "dex-screener", consecutiveFailures: 3 }),
+      failure({ adapter: "climbing", consecutiveFailures: 2 }),
+      failure({ adapter: "long-outage", consecutiveFailures: 9 }),
+      failure({ adapter: "recovered", consecutiveFailures: 3, recoveredAt: now }),
     ];
 
     const failureAlerts = planMonitorAlerts(state, { now }).filter(
       (alert) => alert.kind === "repeated-failure",
     );
-    expect(failureAlerts).toHaveLength(0);
+    expect(failureAlerts.map((alert) => alert.subject)).toEqual(["data-source:dex-screener"]);
   });
 
   it("plans one daily summary for the previous Europe/Paris day", () => {
-    const summaryAlerts = planMonitorAlerts(emptyState(), { now }).filter(
+    const state = emptyState();
+    state.scanGaps = [
+      {
+        id: "gap-1",
+        scanner: "dex-screener-monitor",
+        startedAt: new Date("2026-09-04T11:45:00.000Z"),
+        endedAt: new Date("2026-09-04T12:00:00.000Z"),
+        reason: "data-source-failure:dex-screener",
+      },
+    ];
+
+    const summaryAlerts = planMonitorAlerts(state, { now }).filter(
       (alert) => alert.kind === "daily-summary",
     );
     expect(summaryAlerts).toHaveLength(1);
     expect(summaryAlerts[0]?.id).toBe("daily-summary:2026-09-04");
+    expect(summaryAlerts[0]?.text).toContain("1 data-source failure(s)");
   });
 });
 
@@ -181,10 +166,7 @@ describe("dispatchMonitorAlerts", () => {
       first.close();
     }
     expect(firstCount).toBe(send.mock.calls.length);
-    const setupCalls = send.mock.calls.filter(([message]) =>
-      message.subject.startsWith("baseline:0xpair"),
-    );
-    expect(setupCalls).toHaveLength(1);
+    expect(send.mock.calls.filter(([text]) => text.includes("baseline:0xpair"))).toHaveLength(1);
 
     send.mockClear();
     const second = initializeSimulationStorage({ databasePath });
@@ -225,10 +207,21 @@ describe("dispatchMonitorAlerts", () => {
         now: new Date("2026-09-05T09:15:00.000Z"),
       });
       expect(send).toHaveBeenCalledTimes(1);
-      const state = second.getResumeState();
-      expect(state.alertHistory).toHaveLength(1);
+      expect(second.getResumeState().alertHistory).toHaveLength(1);
     } finally {
       second.close();
     }
   });
 });
+
+function failure(overrides: { adapter: string; consecutiveFailures: number; recoveredAt?: Date }) {
+  return {
+    adapter: overrides.adapter,
+    scanner: "dex-screener-monitor",
+    failedAt: new Date("2026-09-05T08:30:00.000Z"),
+    consecutiveFailures: overrides.consecutiveFailures,
+    nextRetryAt: new Date("2026-09-05T08:45:00.000Z"),
+    recoveredAt: overrides.recoveredAt,
+    error: "rate limited",
+  };
+}
