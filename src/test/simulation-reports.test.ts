@@ -106,12 +106,19 @@ describe("simulation reports", () => {
       expect(html).toContain("Simulated positions");
       expect(html).toContain("Scan gaps");
       expect(html).toContain("Skipped pairs by reason");
+      expect(html).toContain("Skipped pair details");
       expect(html).toContain("Chart markers");
+      expect(html).toContain("<svg");
       expect(html).toContain("setup-created");
       expect(html).toContain("fill");
       expect(html).toContain("take-profit");
       expect(html).toContain("momentum-warning");
       expect(html).toContain("ath");
+      expect(html).toContain("Stop loss");
+      expect(html).toContain("Take profit");
+      expect(html).toContain("Moonbag");
+      expect(html).toContain("0x00000000000000000000000000000000000000bb");
+      expect(html).not.toContain("<td>setup-1</td><td>2026-09-01T13:00:00</td><td>fill</td>");
 
       const csv = await readFile(report.csvPath, "utf8");
       expect(csv).toContain(
@@ -119,6 +126,14 @@ describe("simulation reports", () => {
       );
       expect(csv).toContain(
         "baseline-report,setup-1,0x00000000000000000000000000000000000000aa,2026-09-01T12:00:00,position-1,moonbag,2026-09-01T13:00:00,13000000,25,9000000,26000000,2026-09-01T14:00:00,26000000,take-profit,1,0.58,1.58,0,50",
+      );
+      expect(csv).toContain("scanGaps");
+      expect(csv).toContain("scanner,startedAt,endedAt,reason");
+      expect(csv).toContain("live-monitor,2026-09-01T11:00:00,2026-09-01T11:15:00,process-restart");
+      expect(csv).toContain("skippedPairs");
+      expect(csv).toContain("scanner,pair,scannedAt,reason,details");
+      expect(csv).toContain(
+        'live-monitor,0x00000000000000000000000000000000000000bb,2026-09-01T11:20:00,low-liquidity,"{""liquidityUsd"":500}"',
       );
     } finally {
       storage.close();

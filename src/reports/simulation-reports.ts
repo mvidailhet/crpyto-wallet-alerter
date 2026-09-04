@@ -60,7 +60,7 @@ export async function generateSimulationReports(
   const markers = buildChartMarkers(state);
 
   await mkdir(reportsDirectory, { recursive: true });
-  await writeFile(csvPath, renderCsv(rows), "utf8");
+  await writeFile(csvPath, renderCsv(state, rows), "utf8");
   await writeFile(htmlPath, renderHtml(state, rows, markers, generatedAt), "utf8");
 
   return { htmlPath, csvPath };
@@ -77,7 +77,7 @@ function buildPositionRows(state: ResumeState): PositionReportRow[] {
     const closedAt = dateEntry(position, "closedAt");
     const exitMarketCapUsd = numberEntry(position, "exitMarketCapUsd");
     const latestMarketCapUsd = latestSnapshotMarketCap(snapshots);
-    const highMarketCapUsd = maxSnapshotMarketCap(snapshots, "high");
+    const highMarketCapUsd = maxSnapshotMarketCap(snapshots);
     const lowMarketCapUsd = minSnapshotMarketCap(snapshots);
 
     return {
@@ -105,6 +105,7 @@ function buildPositionRows(state: ResumeState): PositionReportRow[] {
 }
 
 function buildChartMarkers(state: ResumeState): ChartMarker[] {
+  const setupsById = new Map(state.tradeSetups.map((setup) => [setup.id, setup]));
   const setupMarkers = state.tradeSetups.map((setup) => ({
     pair: setup.pair,
     at: setup.createdAt,
@@ -112,9 +113,10 @@ function buildChartMarkers(state: ResumeState): ChartMarker[] {
     label: setup.id,
   }));
   const positionMarkers = state.simulatedPositions.flatMap((position) => {
+    const pair = setupsById.get(position.tradeSetupId)?.pair ?? "";
     const markers: ChartMarker[] = [
       {
-        pair: position.tradeSetupId,
+        pair,
         at: position.openedAt,
         type: "fill",
         label: position.id,
@@ -124,7 +126,7 @@ function buildChartMarkers(state: ResumeState): ChartMarker[] {
     const exitReason = stringEntry(position, "exitReason");
     if (closedAt && exitReason) {
       markers.push({
-        pair: position.tradeSetupId,
+        pair,
         at: closedAt,
         type: exitReason,
         label: position.id,
@@ -158,7 +160,7 @@ function buildChartMarkers(state: ResumeState): ChartMarker[] {
   );
 }
 
-function renderCsv(rows: PositionReportRow[]) {
+function renderCsv(state: ResumeState, rows: PositionReportRow[]) {
   const headers = [
     "strategyVersionId",
     "tradeSetupId",
@@ -180,7 +182,8 @@ function renderCsv(rows: PositionReportRow[]) {
     "maxDrawdownPercent",
     "moonbagPercent",
   ];
-  const lines = [
+  const positionLines = [
+    "positions",
     headers.join(","),
     ...rows.map((row) =>
       [
@@ -208,7 +211,38 @@ function renderCsv(rows: PositionReportRow[]) {
         .join(","),
     ),
   ];
-  return `${lines.join("\n")}\n`;
+  const scanGapLines = [
+    "",
+    "scanGaps",
+    "scanner,startedAt,endedAt,reason",
+    ...state.scanGaps.map((gap) =>
+      [
+        gap.scanner,
+        formatEuropeParisDateTime(gap.startedAt),
+        formatEuropeParisDateTime(gap.endedAt),
+        gap.reason,
+      ]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
+  const skippedPairLines = [
+    "",
+    "skippedPairs",
+    "scanner,pair,scannedAt,reason,details",
+    ...state.skippedPairSummaries.map((summary) =>
+      [
+        summary.scanner,
+        summary.pair,
+        formatEuropeParisDateTime(summary.scannedAt),
+        summary.reason,
+        JSON.stringify(summary.details),
+      ]
+        .map((value) => escapeCsvCell(formatCsvValue(value)))
+        .join(","),
+    ),
+  ];
+  return `${[...positionLines, ...scanGapLines, ...skippedPairLines].join("\n")}\n`;
 }
 
 function renderHtml(
@@ -247,6 +281,8 @@ function renderHtml(
   ${renderPositionTable(rows)}
   ${renderScanGapTable(state)}
   ${renderSkippedPairsTable(skippedByReason)}
+  ${renderSkippedPairDetailsTable(state)}
+  ${renderCharts(state, markers)}
   ${renderChartMarkerTable(markers)}
 </body>
 </html>
@@ -269,11 +305,11 @@ function renderSetupTable(tradeSetups: TradeSetupRecord[]) {
 function renderPositionTable(rows: PositionReportRow[]) {
   return `<h2>Simulated positions</h2>
   <table>
-    <thead><tr><th>Position</th><th>Status</th><th>Entry</th><th>Exit</th><th>Realized PnL</th><th>Unrealized PnL</th><th>Max upside</th><th>Max drawdown</th></tr></thead>
+    <thead><tr><th>Position</th><th>Status</th><th>Entry</th><th>Stop loss</th><th>Take profit</th><th>Exit</th><th>Moonbag</th><th>Realized PnL</th><th>Unrealized PnL</th><th>Max upside</th><th>Max drawdown</th></tr></thead>
     <tbody>${rows
       .map(
         (row) =>
-          `<tr><td>${escapeHtml(row.positionId)}</td><td>${escapeHtml(row.status)}</td><td>${formatNumber(row.entryMarketCapUsd)}</td><td>${formatNumber(row.exitMarketCapUsd)} ${escapeHtml(row.exitReason ?? "")}</td><td>${formatNumber(row.realizedPnlMultiple)}</td><td>${formatNumber(row.unrealizedPnlMultiple)}</td><td>${formatNumber(row.maxUpsideMultiple)}</td><td>${formatNumber(row.maxDrawdownPercent)}%</td></tr>`,
+          `<tr><td>${escapeHtml(row.positionId)}</td><td>${escapeHtml(row.status)}</td><td>${formatNumber(row.entryMarketCapUsd)}</td><td>${formatNumber(row.stopLossMarketCapUsd)}</td><td>${formatNumber(row.takeProfitMarketCapUsd)}</td><td>${formatNumber(row.exitMarketCapUsd)} ${escapeHtml(row.exitReason ?? "")}</td><td>${formatNumber(row.moonbagPercent)}%</td><td>${formatNumber(row.realizedPnlMultiple)}</td><td>${formatNumber(row.unrealizedPnlMultiple)}</td><td>${formatNumber(row.maxUpsideMultiple)}</td><td>${formatNumber(row.maxDrawdownPercent)}%</td></tr>`,
       )
       .join("")}</tbody>
   </table>`;
@@ -305,6 +341,77 @@ function renderSkippedPairsTable(skippedByReason: Map<string, number>) {
   </table>`;
 }
 
+function renderSkippedPairDetailsTable(state: ResumeState) {
+  return `<h2>Skipped pair details</h2>
+  <table>
+    <thead><tr><th>Scanner</th><th>Pair</th><th>Scanned</th><th>Reason</th><th>Details</th></tr></thead>
+    <tbody>${state.skippedPairSummaries
+      .map(
+        (summary) =>
+          `<tr><td>${escapeHtml(summary.scanner)}</td><td>${escapeHtml(summary.pair)}</td><td>${escapeHtml(formatEuropeParisDateTime(summary.scannedAt))}</td><td>${escapeHtml(summary.reason)}</td><td>${escapeHtml(JSON.stringify(summary.details))}</td></tr>`,
+      )
+      .join("")}</tbody>
+  </table>`;
+}
+
+function renderCharts(state: ResumeState, markers: ChartMarker[]) {
+  const snapshotsByPair = groupSnapshotsByPair(state.marketSnapshots);
+  const charts = Array.from(snapshotsByPair.entries())
+    .filter(([, snapshots]) =>
+      snapshots.some((snapshot) => snapshotHighMarketCap(snapshot) !== undefined),
+    )
+    .map(([pair, snapshots]) =>
+      renderChart(
+        pair,
+        snapshots,
+        markers.filter((marker) => marker.pair === pair),
+      ),
+    );
+
+  return charts.length === 0 ? "" : `<h2>Charts</h2>${charts.join("")}`;
+}
+
+function renderChart(pair: string, snapshots: MarketSnapshotRecord[], markers: ChartMarker[]) {
+  const width = 720;
+  const height = 180;
+  const padding = 24;
+  const values = snapshots
+    .map((snapshot) => ({
+      at: snapshot.capturedAt,
+      value: snapshotHighMarketCap(snapshot),
+    }))
+    .filter((point): point is { at: Date; value: number } => point.value !== undefined);
+  if (values.length === 0) {
+    return "";
+  }
+
+  const minTime = Math.min(...values.map((point) => point.at.getTime()));
+  const maxTime = Math.max(...values.map((point) => point.at.getTime()));
+  const minValue = Math.min(...values.map((point) => point.value));
+  const maxValue = Math.max(...values.map((point) => point.value));
+  const points = values.map(
+    (point) =>
+      `${scale(point.at.getTime(), minTime, maxTime, padding, width - padding)},${scale(
+        point.value,
+        minValue,
+        maxValue,
+        height - padding,
+        padding,
+      )}`,
+  );
+
+  return `<h3>${escapeHtml(pair)}</h3>
+  <svg role="img" aria-label="Market-cap chart for ${escapeHtml(pair)}" viewBox="0 0 ${width} ${height}">
+    <polyline fill="none" stroke="#2563eb" stroke-width="2" points="${points.join(" ")}"></polyline>
+    ${markers
+      .map((marker) => {
+        const nearest = nearestPoint(values, marker.at);
+        return `<circle cx="${scale(nearest.at.getTime(), minTime, maxTime, padding, width - padding)}" cy="${scale(nearest.value, minValue, maxValue, height - padding, padding)}" r="4"><title>${escapeHtml(marker.type)} ${escapeHtml(marker.label)}</title></circle>`;
+      })
+      .join("")}
+  </svg>`;
+}
+
 function renderChartMarkerTable(markers: ChartMarker[]) {
   return `<h2>Chart markers</h2>
   <table>
@@ -334,10 +441,8 @@ function latestSnapshotMarketCap(snapshots: MarketSnapshotRecord[]) {
     : snapshotHighMarketCap(snapshots[snapshots.length - 1]);
 }
 
-function maxSnapshotMarketCap(snapshots: MarketSnapshotRecord[], side: "high") {
-  return maxNumber(
-    snapshots.map((snapshot) => (side === "high" ? snapshotHighMarketCap(snapshot) : undefined)),
-  );
+function maxSnapshotMarketCap(snapshots: MarketSnapshotRecord[]) {
+  return maxNumber(snapshots.map(snapshotHighMarketCap));
 }
 
 function minSnapshotMarketCap(snapshots: MarketSnapshotRecord[]) {
@@ -408,6 +513,21 @@ function maxNumber(values: Array<number | undefined>) {
 function minNumber(values: Array<number | undefined>) {
   const numbers = values.filter((value): value is number => value !== undefined);
   return numbers.length === 0 ? undefined : Math.min(...numbers);
+}
+
+function nearestPoint(points: Array<{ at: Date; value: number }>, at: Date) {
+  return points.reduce((nearest, point) =>
+    Math.abs(point.at.getTime() - at.getTime()) < Math.abs(nearest.at.getTime() - at.getTime())
+      ? point
+      : nearest,
+  );
+}
+
+function scale(value: number, min: number, max: number, low: number, high: number) {
+  if (min === max) {
+    return (low + high) / 2;
+  }
+  return low + ((value - min) / (max - min)) * (high - low);
 }
 
 function countBy(values: string[]) {
