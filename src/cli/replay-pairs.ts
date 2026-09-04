@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { getAddress } from "viem";
 
 import { loadConfig } from "../config/env.js";
+import { generateSimulationReports } from "../reports/simulation-reports.js";
 import {
   initializeSimulationStorage,
   type ManualReplayPairImport,
@@ -14,6 +15,8 @@ import {
 type ReplayPairsCommandOptions = {
   databasePath?: string;
   dataDirectory?: string;
+  reportsDirectory?: string;
+  generatedAt?: Date;
   writeLine?: (line: string) => void;
 };
 
@@ -66,7 +69,25 @@ export async function runReplayPairsCommand(
     return;
   }
 
-  throw new Error("Usage: npm run replay-pairs -- <import --csv pairs.csv | list>");
+  if (command === "report") {
+    const storage = initializeSimulationStorage({
+      databasePath: options.databasePath,
+      dataDirectory: options.dataDirectory,
+    });
+
+    try {
+      const report = await generateSimulationReports(storage.getResumeState(), {
+        reportsDirectory: options.reportsDirectory,
+        generatedAt: options.generatedAt,
+      });
+      writeLine(`Wrote simulation reports: ${report.htmlPath} and ${report.csvPath}.`);
+    } finally {
+      storage.close();
+    }
+    return;
+  }
+
+  throw new Error("Usage: npm run replay-pairs -- <import --csv pairs.csv | list | report>");
 }
 
 export function parseManualReplayPairsCsv(csv: string): ManualReplayPairImport[] {
