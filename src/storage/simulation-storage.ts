@@ -130,6 +130,7 @@ export type ResumeState = {
   dataSourceFailures: DataSourceFailureRecord[];
   marketSnapshots: MarketSnapshotRecord[];
   interestingWallets: InterestingWalletRecord[];
+  manualReplayPairs: ManualReplayPairRecord[];
   tradeSetups: TradeSetupRecord[];
   simulatedPositions: SimulatedPositionRecord[];
   scanGaps: ScanGapRecord[];
@@ -703,6 +704,7 @@ export function initializeSimulationStorage(options: SimulationStorageOptions = 
           .prepare("SELECT * FROM interesting_wallets ORDER BY updated_at, wallet")
           .all()
           .map((row) => toInterestingWalletRecord(row as InterestingWalletRow)),
+        manualReplayPairs: this.listManualReplayPairs(),
         tradeSetups: database
           .prepare("SELECT * FROM trade_setups ORDER BY created_at, id")
           .all()
