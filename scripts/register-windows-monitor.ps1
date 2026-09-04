@@ -6,6 +6,7 @@ param(
   [string]$DatabasePath = (Join-Path $DataDirectory "simulation.sqlite"),
   [string]$LogDirectory = (Join-Path $RepositoryRoot "logs"),
   [string]$StrategyVersion = "baseline-96h",
+  [string]$TaskUser = "$env:USERDOMAIN\$env:USERNAME",
   [switch]$AtStartupOnly,
   [switch]$AtLogOnOnly
 )
@@ -39,6 +40,7 @@ npm run monitor *>> '$($monitorLog.Replace("'", "''"))'
 
 $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand" -WorkingDirectory $RepositoryRoot
+$principal = New-ScheduledTaskPrincipal -UserId $TaskUser -LogonType S4U -RunLevel Highest
 
 if ($AtStartupOnly) {
   $triggers = @(New-ScheduledTaskTrigger -AtStartup)
@@ -64,11 +66,13 @@ Register-ScheduledTask `
   -TaskName $TaskName `
   -Action $action `
   -Trigger $triggers `
+  -Principal $principal `
   -Settings $settings `
   -Description "Runs the Robinhood Wallet Alerter live monitor after Windows boot or login." `
   -Force | Out-Null
 
 Write-Host "Registered scheduled task '$TaskName'."
+Write-Host "Task user: $TaskUser"
 Write-Host "Repository root: $RepositoryRoot"
 Write-Host "Simulation database: $DatabasePath"
 Write-Host "Data directory: $DataDirectory"

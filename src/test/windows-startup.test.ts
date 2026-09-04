@@ -9,6 +9,7 @@ describe("Windows startup setup", () => {
     const readme = await readFile("README.md", "utf8");
 
     expect(script).toContain("Register-ScheduledTask");
+    expect(script).toContain("New-ScheduledTaskPrincipal");
     expect(script).toContain("New-ScheduledTaskTrigger -AtStartup");
     expect(script).toContain("New-ScheduledTaskTrigger -AtLogOn");
     expect(script).toContain("SIMULATION_DATABASE_PATH");
